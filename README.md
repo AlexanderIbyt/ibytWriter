@@ -52,7 +52,7 @@ ibytwriter --help
 
 ## Build
 
-You need the ibyt compiler, `nasm` and `ld`. Put the `library/` folder of the ibyt project next to the source files and run the compiler in this folder:
+You need the ibyt compiler. Put the `library/` folder of the ibyt project next to the source files and run the compiler in this folder:
 
 ```
 Main.ibyt  Disk.ibyt  library/
@@ -75,5 +75,6 @@ ibytWriter has automatic tests (about 175 checks with loop devices, fake drives 
 MIT, see [LICENSE](LICENSE). The license covers ibytWriter. The ibyt compiler and its library are separate and have their own terms.
 
 ## Author
+(c) Alexander Zima , https://www.ibyt.tech
 
 Alexander Zima, creator of the [ibyt](https://ibyt.tech/) programming language.
