@@ -43,34 +43,38 @@ public int64 PadWidth: 0            // field width for Pad / PadLeft
 public int64 PadText: 0             // text for PadLeft
 
 // SysPath: builds in Path the path "/sys/block/<Name><Suffix>". $base = suffix (e.g. "/size").
+prepare $pBase@Suffix
 public methode SysPath(base, temp, counter){
+    
     SuffixPtr: $base
     $pBase: Path
     $pTemp: "/sys/block/"
     // Path = "/sys/block/" + Name + suffix
+    prepare $base, $temp@Source
     call String.StrCopy(solid base, solid temp, focus counter)
 
-    $pBase: Path
-    $pTemp: Name
+    prepare $pBase: Path, $pTemp: Name
     call String.StrCat(solid base, solid temp, focus counter)
 
     $pBase: Path
-    $temp: SuffixPtr
+    prepare $base, $temp: SuffixPtr
     call String.StrCat(solid base, solid temp, focus counter)
 }
 
 // ReadNum: reads the number from /sys/block/<Name><Suffix>. $base = suffix. carry = 1: $work = number.
-public methode ReadNum(_, base, temp, work, counter){
+prepare $base@Suffix
+public methode ReadNum(_, base, temp, focus work, counter){
+    prepare $base
     call SysPath(base, temp, counter)
 
     // read the file into Text (at most 512 bytes), then convert it to a number
     $pBase: Path
     $pTemp: Text
-    $work: 512
+    prepare $base, $temp, $work@Size: 512
     call Sys.ReadFile(_, base, temp, work, counter)
     goto_flag not_carry Fail
 
-    $pBase: Text
+    prepare $pBase@Text: Text
     call Basic.AtoI(_, solid base, focus work)
 
     set_carry
@@ -81,11 +85,13 @@ public methode ReadNum(_, base, temp, work, counter){
 }
 
 // CheckName: is $base a valid drive name? Allowed: a-z, 0-9, _ ; 1 to 31 characters. carry = 1: yes
+// ****************This Methode ist not activated. DeadCode****************
+prepare $pBase@Name
 public methode CheckName(_, base, work){
     $work: 0
 
     ->Loop
-        _: $pBase[$work]
+        _: $pBase@Name[$work@Pos]
         compare(_ = 0) goto_true End
 
         compare(_ < 48) goto_true Bad        // below '0'
@@ -103,7 +109,7 @@ public methode CheckName(_, base, work){
         goto Loop↑
 
     ->End
-        compare($work = 0) goto_true Bad
+        compare($work@Len = 0) goto_true Bad
 
         compare($work > 31) goto_true Bad
 
@@ -117,17 +123,18 @@ public methode CheckName(_, base, work){
 // Exists: is there the whole drive "Name" under /sys/block? (Partitions are not listed there.) carry = 1: yes
 public methode Exists(_, base, temp, counter){
     // empty suffix = the directory /sys/block/<Name> itself: it opens only if the whole drive exists
-    $pBase: ""
+    prepare ""
     call SysPath(base, temp, counter)
 
     $pBase: Path
     // O_RDONLY | O_DIRECTORY
-    prepare 65536, 0
-    call Sys.Open(_, solid base, focus counter)
+    prepare 65536, 0, $base
+    call Sys.Open(_, focus counter)
     goto_flag not_carry No
 
-    $base: $counter
-    call Sys.Close(_, solid base, focus counter)
+    $base: $counter@Fd
+    prepare $base
+    call Sys.Close(_, focus counter)
 
     set_carry
     return
@@ -138,22 +145,23 @@ public methode Exists(_, base, temp, counter){
 
 // Load: reads Removable, ReadOnly and the size of the drive from /sys. carry = 1: ok
 public methode Load(_, base, temp, work, counter){
+    
     // removable flag, read-only flag and size in 512-byte sectors; if one read fails, Load fails
-    $pBase: "/removable"
-    call ReadNum(_, base, temp, work, counter)
+    prepare $pBase@Text: "/removable"
+    call ReadNum(_, base, temp, focus work, counter)
     goto_flag not_carry Fail
 
-    IsRemovable: $work
-    $pBase: "/ro"
-    call ReadNum(_, base, temp, work, counter)
+    IsRemovable: $work@Value
+    prepare $pBase@Text: "/ro"
+    call ReadNum(_, base, temp, focus work, counter)
     goto_flag not_carry Fail
 
-    IsReadOnly: $work
-    $pBase: "/size"
-    call ReadNum(_, base, temp, work, counter)
+    IsReadOnly: $work@Value
+    prepare $pBase@Text: "/size"
+    call ReadNum(_, base, temp, focus work, counter)
     goto_flag not_carry Fail
 
-    Sectors: $work
+    Sectors: $work@Value
     set_carry
     return
 
@@ -163,12 +171,12 @@ public methode Load(_, base, temp, work, counter){
 
 // Model: vendor/model text of the drive into Text (without trailing spaces); empty if it cannot be read.
 public methode Model(_, base, temp, work, counter){
-    $pBase: "/device/model"
+    prepare "/device/model"
     call SysPath(base, temp, counter)
 
     $pBase: Path
     $pTemp: Text
-    $work: 512
+    prepare $base, $temp, $work@Size: 512
     call Sys.ReadFile(_, base, temp, work, counter)
     goto_flag carry Got
 
@@ -177,25 +185,24 @@ public methode Model(_, base, temp, work, counter){
     return
 
     ->Got
-        $pBase: Text
+        prepare $pBase@Text: Text
         call String.StrTrimEnd(solid base, focus counter)
 }
 
 // Prefixes: builds Prefix = "/dev/<Name>" and notes whether the name ends with a digit (then partitions are called "...p1").
 public methode Prefixes(_, base, temp, work, counter){
-    $pBase: Prefix
-    $pTemp: "/dev/"
+    prepare $pBase@Prefix: Prefix, $pTemp@Text: "/dev/"
     call String.StrCopy(solid base, solid temp, focus counter)
 
-    $pBase: Prefix
-    $pTemp: Name
+    prepare $pBase: Prefix, $pTemp: Name
     call String.StrCat(solid base, solid temp, focus counter)
 
     // look at the last character of the name
-    $work: $counter
+    $work: $counter@Len
     $work--
     $pBase: Prefix
-    _: $pBase[$work]
+    
+    _: $pBase@Prefix[$work@Len]
     NameEndsDigit: 0
     compare(_ < 48) goto_true Done
 
@@ -208,18 +215,20 @@ public methode Prefixes(_, base, temp, work, counter){
 
 // IsMountedText: does the drive Name (or one of its partitions) appear in the mount table $base? carry = 1: yes
 // The table has one line per mount: "<device> <target> ...". Hit: device = /dev/<Name> or /dev/<Name><digit> resp. /dev/<Name>p<digit>.
+prepare $pBase@Table
 public methode IsMountedText(_, base, temp, work, index, value, counter){
+    
     LinePtr: $base
     call Prefixes(_, base, temp, work, counter)
 
     ->Line
         $base: LinePtr
         // does this line start with /dev/<Name>?
-        $pTemp: Prefix
+        prepare $base, $pTemp@Prefix: Prefix
         call String.StrStarts(solid base, solid temp, focus counter)
         goto_flag not_carry NextLine
 
-        $work: $counter                      // length of the prefix
+        $work@Len: $counter@Len                      // length of the prefix
         $base: LinePtr
         _: $pBase[$work]
         compare(_ = 32) goto_true Mounted    // exactly the drive
@@ -236,7 +245,7 @@ public methode IsMountedText(_, base, temp, work, index, value, counter){
         compare(_ != 112) goto_true NextLine // name ends with a digit: partition = 'p' + digit
 
         $work++
-        _: $pBase[$work]
+        _: $pBase@Line[$work@Pos]
         compare(_ < 48) goto_true NextLine
 
         compare(_ > 57) goto_true NextLine
@@ -244,12 +253,12 @@ public methode IsMountedText(_, base, temp, work, index, value, counter){
 
     ->NextLine
         $base: LinePtr
-        prepare 10
+        prepare $base, 10
         call String.StrFindChar(solid base, focus counter)
         goto_flag not_carry NotMounted       // no more lines
 
         $counter++
-        $base +: $counter
+        $base +: $counter@Skip
         LinePtr: $base
         _: $pBase[0]
         compare(_ = 0) goto_true NotMounted
@@ -285,12 +294,12 @@ public methode IsMountedText(_, base, temp, work, index, value, counter){
 // The sequence "\040" (backslash + 3 octal digits, how the kernel writes spaces in paths) is decoded.
 // $work = size of the target (including the final 0). $counter = number of characters read from the source text.
 public methode CopyField(_, base, temp, work, index, counter, value){
-    FieldMax: $work
+    FieldMax: $work@Size
     $index: 0
     $counter: 0
 
     ->Next
-        _: $pTemp[$counter]
+        _: $pTemp@Source[$counter@Src]
         compare(_ = 32) goto_true Done
 
         compare(_ = 10) goto_true Done
@@ -332,20 +341,20 @@ public methode CopyField(_, base, temp, work, index, counter, value){
         goto Put
 
     ->Plain
-        _: $pTemp[$counter]
+        _: $pTemp@Source[$counter@Src]
         $counter++
 
     ->Put
         $value: FieldMax
         $value--
-        compare($index >= $value) goto_true Next↑        // too long: the rest is cut off
+        compare($index@Out >= $value) goto_true Next↑        // too long: the rest is cut off
 
-        $pBase[$index]: _
+        $pBase@Target[$index]: _
         $index++
         goto Next↑
 
     ->Done
-        $pBase[$index]: 0
+        $pBase@Target[$index@Out]: 0
 }
 
 // StoreMount: remembers device and mount point of the line at LinePtr (at most 8 entries, then MntFull = 1).
@@ -362,7 +371,7 @@ public methode StoreMount(_, base, temp, work, index, counter, value){
     call CopyField(_, base, temp, work, index, counter, value)
 
     $temp: LinePtr
-    $temp +: $counter
+    $temp +: $counter@Len
     $temp++                              // the mount point begins behind the space
     $value: MntCount
     $index: $value
@@ -387,25 +396,29 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
     MountUnsure: 0
     MntAny: 0
     MntRem: 0
-    prepare 0, 0
-    call Sys.Open(_, solid base, focus counter)
+    
+    prepare 0, 0, $base@Text
+    call Sys.Open(_, focus counter)
     goto_flag carry Opened
+    
     goto Unsure
 
     ->Opened
-        MntFd: $counter
+        MntFd: $counter@Fd
 
     ->More
         $base: MntFd
         $pTemp: Mounts
         $pTemp +: MntRem
-        $work: MntChunk
+        
+        prepare $base, $temp, $work@MntChunk: MntChunk
         call Sys.ReadFull(_, base, temp, work, index, counter)
         goto_flag carry Got
+        
         goto UnsureClose
 
     ->Got
-        MntGot: $counter
+        MntGot: $counter@Got
         $value: MntRem
         $value +: MntGot
         MntTotal: $value
@@ -415,7 +428,7 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
         $work: MntTotal
 
     ->FindNl
-        compare($work = 0) goto_true NoNl
+        compare($work@Pos = 0) goto_true NoNl
 
         $work--
         _: Mounts[ $work ]
@@ -439,7 +452,8 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
         _: Mounts[ $work ]
         MntSaved: _
         Mounts[ $work ]: 0
-        $pBase: Mounts
+        
+        prepare $pBase@Mounts: Mounts
         call IsMountedText(_, base, temp, work, index, value, counter)
         goto_flag not_carry NoHitChunk
 
@@ -456,7 +470,7 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
 
     ->Move
         $work: MntCut
-        $work +: $index
+        $work +: $index@Pos
         $value: MntTotal
         compare($work >= $value) goto_true Moved
 
@@ -479,7 +493,8 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
 
         $work: MntRem
         Mounts[ $work ]: 0
-        $pBase: Mounts
+        
+        prepare $pBase@Mounts: Mounts
         call IsMountedText(_, base, temp, work, index, value, counter)
         goto_flag not_carry Finished
 
@@ -487,7 +502,8 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
 
     ->Finished
         $base: MntFd
-        call Sys.Close(_, solid base, focus counter)
+        prepare $base
+        call Sys.Close(_, focus counter)
 
         $value: MntAny
         compare($value = 0) goto_true Free
@@ -501,14 +517,16 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
 
     ->Hit
         $base: MntFd
-        call Sys.Close(_, solid base, focus counter)
+        prepare $base
+        call Sys.Close(_, focus counter)
 
         set_carry
         return
 
     ->UnsureClose
         $base: MntFd
-        call Sys.Close(_, solid base, focus counter)
+        prepare $base
+        call Sys.Close(_, focus counter)
 
     ->Unsure
         MountUnsure: 1
@@ -534,36 +552,28 @@ public methode Collect(_, base, temp, work, index, value, counter){
 
 // IsVirtual: is $base the name of a virtual device (loop0, ram0, zram0, dm-0, sr0, fd0, md0, nbd0)? carry = 1: yes
 public methode IsVirtual(solid base, temp, counter){
-    $pTemp: "loop"
-    call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base@Text, $pTemp@Text: "loop" call String.StrStarts(solid base, solid temp, focus counter)
     goto_flag carry Yes
 
-    $pTemp: "ram"
-    call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "ram" call String.StrStarts(solid base, solid temp, focus counter)
     goto_flag carry Yes
 
-    $pTemp: "zram"
-    call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "zram" call String.StrStarts(solid base, solid temp, focus counter)
     goto_flag carry Yes
 
-    $pTemp: "dm-"
-    call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "dm-" call String.StrStarts(solid base, solid temp, focus counter)
     goto_flag carry Yes
 
-    $pTemp: "sr"
-    call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "sr" call String.StrStarts(solid base, solid temp, focus counter)
     goto_flag carry Yes
 
-    $pTemp: "fd"
-    call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "fd" call String.StrStarts(solid base, solid temp, focus counter)
     goto_flag carry Yes
 
-    $pTemp: "md"
-    call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "md" call String.StrStarts(solid base, solid temp, focus counter)
     goto_flag carry Yes
 
-    $pTemp: "nbd"
-    call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "nbd" call String.StrStarts(solid base, solid temp, focus counter)
     goto_flag carry Yes
 
     unset_carry
@@ -574,18 +584,17 @@ public methode IsVirtual(solid base, temp, counter){
 }
 
 // Pad: prints the text $base and fills it with spaces up to $work characters.
-public methode Pad(_, base, work){
+public methode Pad(_, base, work@Width){
     PadWidth: $work
-    call String.StrLen(solid base, focus _)
+    prepare $base@Text call String.StrLen(solid base, focus _)
 
     $work: _
-    call Basic.Print()
+    prepare $base call Basic.Print(solid base)
 
     ->Fill
-        compare($work >= PadWidth) goto_true Done
+        compare($work@Count >= PadWidth) goto_true Done
 
-        $pBase: " "
-        call Basic.Print()
+        prepare $pBase@Text: " " call Basic.Print(solid base)
 
         $work++
         goto Fill↑
@@ -594,26 +603,24 @@ public methode Pad(_, base, work){
 }
 
 // PadLeft: prints the text $base right-aligned in a field of $work characters.
-public methode PadLeft(_, base, work, counter){
+public methode PadLeft(_, base@Text, work@Width, counter){
     PadText: $base
     PadWidth: $work
-    call String.StrLen(solid base, focus _)
+    prepare $base call String.StrLen(solid base, focus _)
 
     $counter: _
     $work: PadWidth
 
     ->Fill
-        compare($work <= $counter) goto_true Show
+        compare($work@Fill <= $counter@Len) goto_true Show
 
-        $pBase: " "
-        call Basic.Print()
+        prepare $pBase@Text: " " call Basic.Print(solid base)
 
         $work--
         goto Fill↑
 
     ->Show
-        $base: PadText
-        call Basic.Print()
+        prepare $base@PadText: PadText call Basic.Print(solid base)
 }
 
 // Show: one table row for the drive Name (the properties must have been read with Load).
@@ -622,23 +629,18 @@ public methode Show(_, base, temp, work, index, value, counter){
     compare($value = 0) goto_true Plain
 
     // number of the row ("  1) ", "  2) " ...)
-    $pBase: "  "
-    call Basic.Print()
+    prepare $pBase@Text: "  " call Basic.Print(solid base)
 
     $pBase: Num
-    $value: ShowNo
-    call Basic.ItoA(_, solid base, solid value)
+    prepare $base, $value: ShowNo call Basic.ItoA(_, solid base, solid value)
 
-    $pBase: Num
-    call Basic.Print()
+    prepare $pBase: Num call Basic.Print(solid base)
 
-    $pBase: ") "
-    call Basic.Print()
+    prepare $pBase: ") " call Basic.Print(solid base)
     goto Number
 
     ->Plain
-        $pBase: "  "
-        call Basic.Print()
+        prepare $pBase@Text: "  " call Basic.Print(solid base)
 
     ->Number
         $pBase: Name
@@ -648,25 +650,22 @@ public methode Show(_, base, temp, work, index, value, counter){
         $pBase: Num
         $value: Sectors
         $value /: 2048
-        call Basic.ItoA(_, solid base, solid value)
+        prepare $base, $value call Basic.ItoA(_, solid base, solid value)
 
         $pBase: Num
         $work: 8
         call PadLeft(_, base, work, counter)
 
-        $pBase: " MiB  "
-        call Basic.Print()
+        prepare $pBase@Text: " MiB  " call Basic.Print(solid base)
 
         $value: IsRemovable
         compare($value = 1) goto_true Rem
 
-        $pBase: "fixed      "
-        call Basic.Print()
+        prepare $pBase: "fixed      " call Basic.Print(solid base)
         goto Mod
 
     ->Rem
-        $pBase: "removable  "
-        call Basic.Print()
+        prepare $pBase@Text: "removable  " call Basic.Print(solid base)
 
     ->Mod
         call Model(_, base, temp, work, counter)
@@ -678,13 +677,11 @@ public methode Show(_, base, temp, work, index, value, counter){
         call IsMounted(_, base, temp, work, index, value, counter)
         goto_flag carry Mnt
 
-        $pBase: "\n"
-        call Basic.Print()
+        prepare $pBase@Text: "\n" call Basic.Print(solid base)
         return
 
     ->Mnt
-        $pBase: "MOUNTED\n"
-        call Basic.Print()
+        prepare $pBase@Text: "MOUNTED\n" call Basic.Print(solid base)
 }
 
 // SortNames: sorts the names in Names (ListCount of them, 32 bytes each) alphabetically, so the numbers stay stable.
@@ -693,20 +690,20 @@ public methode SortNames(base, temp, work, index, counter, value){
 
     ->Outer
         $value: ListCount
-        compare($index >= $value) goto_true Done
+        compare($index@Outer >= $value) goto_true Done
 
         // SortTmp = Names[index]
         $work: $index
         $work <<: 5
         $pTemp: Names
         $pTemp +: $work
-        $pBase: SortTmp
+        prepare $pBase@SortTmp: SortTmp, $temp
         call String.StrCopy(solid base, solid temp, focus counter)
 
         $work: $index
 
     ->Inner
-        compare($work = 0) goto_true Place
+        compare($work@Pos = 0) goto_true Place
 
         // compare Names[work-1] with SortTmp
         $counter: $work
@@ -714,11 +711,11 @@ public methode SortNames(base, temp, work, index, counter, value){
         $counter <<: 5
         $pBase: Names
         $pBase +: $counter
-        $pTemp: SortTmp
+        prepare $base, $pTemp@SortTmp: SortTmp
         call String.StrCompare(solid base, solid temp, focus counter)
         goto_flag carry Place
 
-        compare($counter > 255) goto_true Place     // negative = Names[work-1] already comes first
+        compare($counter@Cmp > 255) goto_true Place     // negative = Names[work-1] already comes first
 
         // Names[work] = Names[work-1]
         $counter: $work
@@ -730,6 +727,7 @@ public methode SortNames(base, temp, work, index, counter, value){
         $counter <<: 5
         $pTemp: Names
         $pTemp +: $counter
+        prepare $base, $temp
         call String.StrCopy(solid base, solid temp, focus counter)
 
         $work--
@@ -738,8 +736,8 @@ public methode SortNames(base, temp, work, index, counter, value){
     ->Place
         $work <<: 5
         $pBase: Names
-        $pBase +: $work
-        $pTemp: SortTmp
+        $pBase +: $work@Offset
+        prepare $base, $pTemp@SortTmp: SortTmp
         call String.StrCopy(solid base, solid temp, focus counter)
 
         $index++
@@ -753,27 +751,28 @@ public methode SortNames(base, temp, work, index, counter, value){
 public methode List(_, base, temp, work, index, value, counter){
     ListCount: 0
     $pBase: "/sys/block"
-    prepare 65536, 0
-    call Sys.Open(_, solid base, focus counter)
+    prepare 65536, 0, $base@Text
+    call Sys.Open(_, focus counter)
     goto_flag not_carry Fail
 
-    DirFd: $counter
+    DirFd: $counter@Fd
 
     ->More
         $base: DirFd
         $pTemp: Dents
-        prepare 4096
-        call Sys.GetDents(_, solid base, solid temp, focus counter)
+        prepare 4096, $base, $temp
+        call Sys.GetDents(_, focus counter)
         goto_flag not_carry Done
 
-        compare($counter = 0) goto_true Done
+        compare($counter@Got = 0) goto_true Done
 
         DentsLen: $counter
         DentsPos: 0
 
     ->Entry
         $index: DentsPos
-        compare($index >= DentsLen) goto_true More↑
+        compare($index >= DentsLen)
+        goto_true More↑
 
         $pBase: Dents
         $pBase +: $index                     // start of the entry
@@ -781,18 +780,20 @@ public methode List(_, base, temp, work, index, value, counter){
         $work: $pBase[17]                    // high byte
         $work <<: 8
         $work +: _
-        $index +: $work
+        $index +: $work@Len
         DentsPos: $index                     // next entry
         $base +: 19                          // name
+        
         _: $pBase[0]
-        compare(_ = 46) goto_true Entry↑     // "." and ".." and hidden names
+        compare(_ = 46) 
+        goto_true Entry↑     // "." and ".." and hidden names
 
         call IsVirtual(solid base, temp, counter)
         goto_flag carry Entry↑
 
         $temp: $base
         $pBase: Name
-        prepare 32
+        prepare $base, $temp, 32
         call String.StrCopyN(solid base, solid temp, focus counter)
         goto_flag not_carry Entry↑           // name too long
 
@@ -812,7 +813,7 @@ public methode List(_, base, temp, work, index, value, counter){
         $value <<: 5
         $pBase: Names
         $pBase +: $value
-        $pTemp: Name
+        prepare $base, $pTemp@Name: Name
         call String.StrCopy(solid base, solid temp, focus counter)
 
         ListCount++
@@ -820,7 +821,8 @@ public methode List(_, base, temp, work, index, value, counter){
 
     ->Done
         $base: DirFd
-        call Sys.Close(_, solid base, focus counter)
+        prepare $base
+        call Sys.Close(_, focus counter)
 
         call SortNames(base, temp, work, index, counter, value)
 
@@ -829,13 +831,14 @@ public methode List(_, base, temp, work, index, value, counter){
 
     ->Rows
         $value: ListCount
-        compare($index >= $value) goto_true Shown
+        compare($index@Row >= $value)
+        goto_true Shown
 
         $work: $index
         $work <<: 5
         $pTemp: Names
         $pTemp +: $work
-        $pBase: Name
+        prepare $pBase@Name: Name, $temp
         call String.StrCopy(solid base, solid temp, focus counter)
 
         DentsPos: $index                     // counter of the display (Dents is not needed any more)
@@ -851,10 +854,11 @@ public methode List(_, base, temp, work, index, value, counter){
 
     ->Shown
         $value: ListCount
-        compare($value != 0) goto_true Listed
+        compare($value != 0)
+        goto_true Listed
 
-        $pBase: "  (no drives found)\n"
-        call Basic.Print()
+        prepare $pBase@Text: "  (no drives found)\n"
+        call Basic.Print(solid base)
 
     ->Listed
         set_carry
