@@ -9,78 +9,59 @@ public byte Num[32]                 // number converted to text
 public byte Mounts[65537]           // buffer for the mount table (read in chunks)
 public byte Dents[4096]             // directory entries of /sys/block (getdents buffer)
 
-public int64 SuffixPtr: 0           // suffix argument of SysPath
-public int64 Sectors: 0             // size of the drive in 512-byte sectors
-public int64 IsRemovable: 0         // 1 = removable (/sys/block/<Name>/removable)
-public int64 IsReadOnly: 0          // 1 = write-protected
-public int64 NameEndsDigit: 0       // 1 = the name ends with a digit (partitions are then called ...p1)
-public int64 LinePtr: 0             // start of the mount table line being checked
-public int64 DirFd: 0               // file descriptor of /sys/block
-public int64 DentsLen: 0            // bytes in Dents
-public int64 DentsPos: 0            // read position in Dents (List also uses it as a display counter)
-public int64 ListAll: 0             // 0 = only removable drives, 1 = all real drives
-public int64 ListCount: 0           // number of drives found
-public int64 Numbered: 0            // 1 = number the rows (1) 2) ...)
-public int64 ShowNo: 0              // number of the row being shown
-public int64 CollectMode: 0         // 1 = IsMountedText collects all hits instead of stopping at the first
-public int64 MntCount: 0            // collected mount points (at most 8)
-public int64 MntFull: 0             // 1 = there are more than 8 mount points
-public int64 MountUnsure: 0         // 1 = the mount table could not be checked safely
-public int64 FieldMax: 0            // size of the target in CopyField
-public int64 MntChunk: 4096         // bytes read from the mount table per read
-public int64 MntFd: 0               // file descriptor of the mount table
-public int64 MntRem: 0              // bytes at the start of the buffer: unfinished line from the last block
-public int64 MntGot: 0              // bytes read by the last read
-public int64 MntTotal: 0            // bytes in the buffer
-public int64 MntCut: 0              // length of the complete part (up to and including the last line end)
-public int64 MntSaved: 0            // byte that was replaced by 0 while checking
-public int64 MntAny: 0              // 1 = a hit was found
+// No single variables: yes/no values are in the flag container Dk, numbers in the data containers Info and State
+public flag diskDk{ removable, readOnly, endsDigit, listAll, numbered, collect, mntFull, mountUnsure, mntAny }
+
+public int64 diskPub64{ sectors, listCount, mntCount }           // results for other modules
+private int64 diskPri64{ suffixPtr, linePtr, dirFd, dentsLen, dentsPos, showNo, fieldMax, mntFd, mntRem, mntGot, mntTotal, mntCut, mntSaved, padWidth, padText }   // working numbers of this module
+private define MNT_CHUNK: 4096                // bytes read from the mount table per read
+
 public byte MntDev[512]             // collected device names (8 x 64 bytes)
 public byte MntPt[2048]             // collected mount points (8 x 256 bytes)
 public byte Names[512]              // names of the drives found (16 x 32 bytes)
 public byte SortTmp[32]             // temporary name while sorting
-public int64 PadWidth: 0            // field width for Pad / PadLeft
-public int64 PadText: 0             // text for PadLeft
 
 // SysPath: builds in Path the path "/sys/block/<Name><Suffix>". $base = suffix (e.g. "/size").
 prepare $pBase@Suffix
-public methode SysPath(base, temp, counter){
+public methode SysPath(base, temp, counter, item, admin){
     
-    SuffixPtr: $base
+    diskPri64.suffixPtr: $base
     $pBase: Path
     $pTemp: "/sys/block/"
+    
     // Path = "/sys/block/" + Name + suffix
     prepare $base, $temp@Source
-    call String.StrCopy(solid base, solid temp, focus counter)
+    call String.StrCopy(=)
 
     prepare $pBase: Path, $pTemp: Name
-    call String.StrCat(solid base, solid temp, focus counter)
+    call String.StrCat(=)
 
     $pBase: Path
-    prepare $base, $temp: SuffixPtr
-    call String.StrCat(solid base, solid temp, focus counter)
+    $temp: diskPri64.suffixPtr
+    prepare $base, $temp
+    call String.StrCat(=)
 }
 
 // ReadNum: reads the number from /sys/block/<Name><Suffix>. $base = suffix. carry = 1: $work = number.
 prepare $base@Suffix
-public methode ReadNum(_, base, temp, focus work, counter){
+public methode ReadNum(_, base, temp, focus work, counter, item, admin){
     prepare $base
-    call SysPath(base, temp, counter)
+    call SysPath(=)
 
     // read the file into Text (at most 512 bytes), then convert it to a number
     $pBase: Path
     $pTemp: Text
     prepare $base, $temp, $work@Size: 512
-    call Sys.ReadFile(_, base, temp, work, counter)
+    call Sys.ReadFile(=)
     goto_flag not_carry Fail
 
-    prepare $pBase@Text: Text
-    call Basic.AtoI(_, solid base, focus work)
+    prepare $pBase: Text
+    call Basic.AtoI(=)
 
     set_carry
     return
 
-    ->Fail
+    ->Fail->
         unset_carry
 }
 
@@ -90,7 +71,7 @@ prepare $pBase@Name
 public methode CheckName(_, base, work){
     $work: 0
 
-    ->Loop
+    ->Loop->
         _: $pBase@Name[$work@Pos]
         compare(_ = 0) goto_true End
 
@@ -104,11 +85,11 @@ public methode CheckName(_, base, work){
 
         compare(_ > 122) goto_true Bad       // only a-z
 
-    ->Good
+    ->Good->
         $work++
         goto Loop↑
 
-    ->End
+    ->End->
         compare($work@Len = 0) goto_true Bad
 
         compare($work > 31) goto_true Bad
@@ -116,86 +97,90 @@ public methode CheckName(_, base, work){
         set_carry
         return
 
-    ->Bad
+    ->Bad->
         unset_carry
 }
 
 // Exists: is there the whole drive "Name" under /sys/block? (Partitions are not listed there.) carry = 1: yes
-public methode Exists(_, base, temp, counter){
+public methode Exists(_, base, temp, counter, item, admin){
     // empty suffix = the directory /sys/block/<Name> itself: it opens only if the whole drive exists
     prepare ""
-    call SysPath(base, temp, counter)
+    call SysPath(=)
 
     $pBase: Path
     // O_RDONLY | O_DIRECTORY
     prepare 65536, 0, $base
-    call Sys.Open(_, focus counter)
+    call Sys.Open(=)
     goto_flag not_carry No
 
     $base: $counter@Fd
     prepare $base
-    call Sys.Close(_, focus counter)
+    call Sys.Close(=)
 
     set_carry
     return
 
-    ->No
+    ->No->
         unset_carry
 }
 
 // Load: reads Removable, ReadOnly and the size of the drive from /sys. carry = 1: ok
-public methode Load(_, base, temp, work, counter){
+public methode Load(_, base, temp, work, counter, item, admin){
     
     // removable flag, read-only flag and size in 512-byte sectors; if one read fails, Load fails
     prepare $pBase@Text: "/removable"
-    call ReadNum(_, base, temp, focus work, counter)
+    call ReadNum(=)
     goto_flag not_carry Fail
 
-    IsRemovable: $work@Value
+    diskDk.removable: false
+    if ($work@Value = 1){ diskDk.removable: true }
+
     prepare $pBase@Text: "/ro"
-    call ReadNum(_, base, temp, focus work, counter)
+    call ReadNum(=)
     goto_flag not_carry Fail
 
-    IsReadOnly: $work@Value
+    diskDk.readOnly: false
+    if ($work@Value = 1){ diskDk.readOnly: true }
+
     prepare $pBase@Text: "/size"
-    call ReadNum(_, base, temp, focus work, counter)
+    call ReadNum(=)
     goto_flag not_carry Fail
 
-    Sectors: $work@Value
+    diskPub64.sectors: $work@Value
     set_carry
     return
 
-    ->Fail
+    ->Fail->
         unset_carry
 }
 
 // Model: vendor/model text of the drive into Text (without trailing spaces); empty if it cannot be read.
-public methode Model(_, base, temp, work, counter){
+public methode Model(_, base, temp, work, counter, item, admin){
     prepare "/device/model"
-    call SysPath(base, temp, counter)
+    call SysPath(=)
 
     $pBase: Path
     $pTemp: Text
     prepare $base, $temp, $work@Size: 512
-    call Sys.ReadFile(_, base, temp, work, counter)
+    call Sys.ReadFile(=)
     goto_flag carry Got
 
     $pBase: Text
     $pBase[0]: 0
     return
 
-    ->Got
+    ->Got->
         prepare $pBase@Text: Text
-        call String.StrTrimEnd(solid base, focus counter)
+        call String.StrTrimEnd(=)
 }
 
 // Prefixes: builds Prefix = "/dev/<Name>" and notes whether the name ends with a digit (then partitions are called "...p1").
-public methode Prefixes(_, base, temp, work, counter){
+public methode Prefixes(_, base, temp, work, counter, item, admin){
     prepare $pBase@Prefix: Prefix, $pTemp@Text: "/dev/"
-    call String.StrCopy(solid base, solid temp, focus counter)
+    call String.StrCopy(=)
 
     prepare $pBase: Prefix, $pTemp: Name
-    call String.StrCat(solid base, solid temp, focus counter)
+    call String.StrCat(=)
 
     // look at the last character of the name
     $work: $counter@Len
@@ -203,45 +188,44 @@ public methode Prefixes(_, base, temp, work, counter){
     $pBase: Prefix
     
     _: $pBase@Prefix[$work@Len]
-    NameEndsDigit: 0
+    diskDk.endsDigit: false
     compare(_ < 48) goto_true Done
 
     compare(_ > 57) goto_true Done
 
-    NameEndsDigit: 1
+    diskDk.endsDigit: true
 
-    ->Done
+    ->Done->
 }
 
 // IsMountedText: does the drive Name (or one of its partitions) appear in the mount table $base? carry = 1: yes
 // The table has one line per mount: "<device> <target> ...". Hit: device = /dev/<Name> or /dev/<Name><digit> resp. /dev/<Name>p<digit>.
 prepare $pBase@Table
-public methode IsMountedText(_, base, temp, work, index, value, counter){
+public methode IsMountedText(_, base, temp, work, index, value, counter, item, admin){
     
-    LinePtr: $base
-    call Prefixes(_, base, temp, work, counter)
+    diskPri64.linePtr: $base
+    call Prefixes(=)
 
-    ->Line
-        $base: LinePtr
+    ->Line->
+        $base: diskPri64.linePtr
         // does this line start with /dev/<Name>?
         prepare $base, $pTemp@Prefix: Prefix
-        call String.StrStarts(solid base, solid temp, focus counter)
+        call String.StrStarts(=)
         goto_flag not_carry NextLine
 
         $work@Len: $counter@Len                      // length of the prefix
-        $base: LinePtr
+        $base: diskPri64.linePtr
         _: $pBase[$work]
         compare(_ = 32) goto_true Mounted    // exactly the drive
 
-        $value: NameEndsDigit
-        compare($value = 1) goto_true DigitName
+        compare (diskDk.endsDigit) goto_true DigitName
 
         compare(_ < 48) goto_true NextLine   // name ends with a letter: partition = digit
 
         compare(_ > 57) goto_true NextLine
         goto Mounted
 
-    ->DigitName
+    ->DigitName->
         compare(_ != 112) goto_true NextLine // name ends with a digit: partition = 'p' + digit
 
         $work++
@@ -251,54 +235,53 @@ public methode IsMountedText(_, base, temp, work, index, value, counter){
         compare(_ > 57) goto_true NextLine
         goto Mounted
 
-    ->NextLine
-        $base: LinePtr
+    ->NextLine->
+        $base: diskPri64.linePtr
         prepare $base, 10
-        call String.StrFindChar(solid base, focus counter)
+        call String.StrFindChar(=)
         goto_flag not_carry NotMounted       // no more lines
 
         $counter++
         $base +: $counter@Skip
-        LinePtr: $base
+        diskPri64.linePtr: $base
         _: $pBase[0]
         compare(_ = 0) goto_true NotMounted
         goto Line↑
 
-    ->Mounted
-        $value: CollectMode
-        compare($value = 0) goto_true Hit
+    ->Mounted->
+        compare (diskDk.collect) goto_flag not_carry Hit
 
         // collect mode: store the mount point and go on with the next line
-        call StoreMount(_, base, temp, work, index, counter, value)
+        call StoreMount(=)
         goto NextLine↑
 
-    ->Hit
+    ->Hit->
         set_carry
         return
 
-    ->NotMounted
-        $value: CollectMode
-        compare($value = 0) goto_true NoHit
+    ->NotMounted->
+        compare (diskDk.collect) goto_flag not_carry NoHit
 
-        $value: MntCount
+        $value: diskPub64.mntCount
         compare($value = 0) goto_true NoHit
 
         set_carry
         return
 
-    ->NoHit
+    ->NoHit->
         unset_carry
 }
 
 // CopyField: copies a field of the mount table from $temp (up to a space, line end or text end) to $base.
 // The sequence "\040" (backslash + 3 octal digits, how the kernel writes spaces in paths) is decoded.
 // $work = size of the target (including the final 0). $counter = number of characters read from the source text.
-public methode CopyField(_, base, temp, work, index, counter, value){
-    FieldMax: $work@Size
+prepare $pBase@Target, $pTemp@Source, $work@Size
+public methode CopyField(_, base, temp, work, index, focus counter, value){
+    diskPri64.fieldMax: $work@Size
     $index: 0
     $counter: 0
 
-    ->Next
+    ->Next->
         _: $pTemp@Source[$counter@Src]
         compare(_ = 32) goto_true Done
 
@@ -340,12 +323,12 @@ public methode CopyField(_, base, temp, work, index, counter, value){
         $counter +: 4
         goto Put
 
-    ->Plain
+    ->Plain->
         _: $pTemp@Source[$counter@Src]
         $counter++
 
-    ->Put
-        $value: FieldMax
+    ->Put->
+        $value: diskPri64.fieldMax
         $value--
         compare($index@Out >= $value) goto_true Next↑        // too long: the rest is cut off
 
@@ -353,81 +336,82 @@ public methode CopyField(_, base, temp, work, index, counter, value){
         $index++
         goto Next↑
 
-    ->Done
+    ->Done->
         $pBase@Target[$index@Out]: 0
 }
 
 // StoreMount: remembers device and mount point of the line at LinePtr (at most 8 entries, then MntFull = 1).
 public methode StoreMount(_, base, temp, work, index, counter, value){
-    $value: MntCount
+    $value: diskPub64.mntCount
     compare($value >= 8) goto_true Full
 
     $index: $value
     $index <<: 6
     $pBase: MntDev
     $pBase +: $index
-    $temp: LinePtr
-    $work: 64
-    call CopyField(_, base, temp, work, index, counter, value)
+    prepare $base, $temp@Source: diskPri64.linePtr, $work@Size: 64
+    call CopyField(=)
 
-    $temp: LinePtr
+    $temp: diskPri64.linePtr
     $temp +: $counter@Len
     $temp++                              // the mount point begins behind the space
-    $value: MntCount
+    $value: diskPub64.mntCount
     $index: $value
     $index <<: 8
     $pBase: MntPt
     $pBase +: $index
-    $work: 256
-    call CopyField(_, base, temp, work, index, counter, value)
+    prepare $base, $temp, $work: 256
+    call CopyField(=)
 
-    MntCount++
+    diskPub64.mntCount++
     return
 
-    ->Full
-        MntFull: 1
+    ->Full->
+        diskDk.mntFull: true
 }
 
-// IsMountedFile: like IsMounted, but reads the mount table from the file $base (path), in blocks of MntChunk bytes.
+// IsMountedFile: like IsMounted, but reads the mount table from the file $base (path), in blocks of MNT_CHUNK bytes.
 // A line may cross a block boundary: only complete lines are checked, the unfinished rest moves to the start of the buffer
 // and is completed by the next block. So the table has no size limit.
 // Only if the file cannot be read or a single line gets too long, the result is unsure (MountUnsure = 1, carry = 1).
-public methode IsMountedFile(_, base, temp, work, index, value, counter){
-    MountUnsure: 0
-    MntAny: 0
-    MntRem: 0
+prepare $pBase@Path
+public methode IsMountedFile(_, base, temp, work, index, value, counter, item, admin){
+    diskDk.mountUnsure: false
+    diskDk.mntAny: false
+    diskPri64.mntRem: 0
     
-    prepare 0, 0, $base@Text
-    call Sys.Open(_, focus counter)
+    prepare 0, 0, $base
+    call Sys.Open(=)
     goto_flag carry Opened
     
     goto Unsure
 
-    ->Opened
-        MntFd: $counter@Fd
+    ->Opened->
+        diskPri64.mntFd: $counter@Fd
 
-    ->More
-        $base: MntFd
+    ->More->
+        $base: diskPri64.mntFd
         $pTemp: Mounts
-        $pTemp +: MntRem
+        $work: diskPri64.mntRem
+        $pTemp +: $work
         
-        prepare $base, $temp, $work@MntChunk: MntChunk
-        call Sys.ReadFull(_, base, temp, work, index, counter)
+        prepare $base, $temp, $work: MNT_CHUNK
+        call Sys.ReadFull(=)
         goto_flag carry Got
         
         goto UnsureClose
 
-    ->Got
-        MntGot: $counter@Got
-        $value: MntRem
-        $value +: MntGot
-        MntTotal: $value
+    ->Got->
+        diskPri64.mntGot: $counter@Got
+        $value: diskPri64.mntRem
+        $value +: $counter@Got
+        diskPri64.mntTotal: $value
         compare($counter = 0) goto_true Eof
 
         // find the last line end in the buffer
-        $work: MntTotal
+        $work: diskPri64.mntTotal
 
-    ->FindNl
+    ->FindNl->
         compare($work@Pos = 0) goto_true NoNl
 
         $work--
@@ -435,44 +419,42 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
         compare(_ != 10) goto_true FindNl↑
 
         $work++
-        MntCut: $work
+        diskPri64.mntCut: $work
         goto Process
 
-    ->NoNl
+    ->NoNl->
         // no complete line yet: keep reading as long as the buffer has room
-        $value: MntTotal
+        $value: diskPri64.mntTotal
         compare($value >= 61440) goto_true UnsureClose
 
-        MntRem: $value
+        diskPri64.mntRem: $value
         goto More↑
 
-    ->Process
+    ->Process->
         // cut behind the last line end (remember the byte), check, put the byte back
-        $work: MntCut
+        $work: diskPri64.mntCut
         _: Mounts[ $work ]
-        MntSaved: _
+        diskPri64.mntSaved: _
         Mounts[ $work ]: 0
         
         prepare $pBase@Mounts: Mounts
-        call IsMountedText(_, base, temp, work, index, value, counter)
+        call IsMountedText(=)
         goto_flag not_carry NoHitChunk
 
-        MntAny: 1
-        $value: CollectMode
-        compare($value = 0) goto_true Hit
+        diskDk.mntAny: true
+        compare (diskDk.collect) goto_flag not_carry Hit
 
-    ->NoHitChunk
-        $work: MntCut
-        _: MntSaved
+    ->NoHitChunk->
+        $work: diskPri64.mntCut
+        _: diskPri64.mntSaved
         Mounts[ $work ]: _
         // move the unfinished rest to the start of the buffer
         $index: 0
 
-    ->Move
-        $work: MntCut
+    ->Move->
+        $work: diskPri64.mntCut
         $work +: $index@Pos
-        $value: MntTotal
-        compare($work >= $value) goto_true Moved
+        compare($work >= diskPri64.mntTotal) goto_true Moved
 
         _: Mounts[ $work ]
         $work: $index
@@ -480,217 +462,214 @@ public methode IsMountedFile(_, base, temp, work, index, value, counter){
         $index++
         goto Move↑
 
-    ->Moved
-        $value: MntTotal
-        $value -: MntCut
-        MntRem: $value
+    ->Moved->
+        $value: diskPri64.mntTotal
+        $value -: diskPri64.mntCut
+        diskPri64.mntRem: $value
         goto More↑
 
-    ->Eof
+    ->Eof->
         // end of file: a last line without a line end is still checked
-        $value: MntRem
+        $value: diskPri64.mntRem
         compare($value = 0) goto_true Finished
 
-        $work: MntRem
+        $work: diskPri64.mntRem
         Mounts[ $work ]: 0
         
         prepare $pBase@Mounts: Mounts
-        call IsMountedText(_, base, temp, work, index, value, counter)
+        call IsMountedText(=)
         goto_flag not_carry Finished
 
-        MntAny: 1
+        diskDk.mntAny: true
 
-    ->Finished
-        $base: MntFd
+    ->Finished->
+        $base: diskPri64.mntFd
         prepare $base
-        call Sys.Close(_, focus counter)
+        call Sys.Close(=)
 
-        $value: MntAny
-        compare($value = 0) goto_true Free
+        compare (diskDk.mntAny) goto_flag not_carry Free
 
         set_carry
         return
 
-    ->Free
+    ->Free->
         unset_carry
         return
 
-    ->Hit
-        $base: MntFd
+    ->Hit->
+        $base: diskPri64.mntFd
         prepare $base
-        call Sys.Close(_, focus counter)
+        call Sys.Close(=)
 
         set_carry
         return
 
-    ->UnsureClose
-        $base: MntFd
+    ->UnsureClose->
+        $base: diskPri64.mntFd
         prepare $base
-        call Sys.Close(_, focus counter)
+        call Sys.Close(=)
 
-    ->Unsure
-        MountUnsure: 1
+    ->Unsure->
+        diskDk.mountUnsure: true
         set_carry
 }
 
 // IsMounted: reads /proc/mounts and checks the drive Name. carry = 1: mounted OR not safely checkable (MountUnsure = 1):
 // when in doubt nothing is written.
-public methode IsMounted(_, base, temp, work, index, value, counter){
-    $pBase: "/proc/mounts"
-    call IsMountedFile(_, base, temp, work, index, value, counter)
+public methode IsMounted(_, base, temp, work, index, value, counter, item, admin){
+    prepare $pBase@Path: "/proc/mounts"
+    call IsMountedFile(=)
 }
 
 // Collect: like IsMounted, but collects up to 8 mount points of the drive in MntDev / MntPt (MntCount, MntFull).
-public methode Collect(_, base, temp, work, index, value, counter){
-    MntCount: 0
-    MntFull: 0
-    CollectMode: 1
-    call IsMounted(_, base, temp, work, index, value, counter)
+public methode Collect(_, base, temp, work, index, value, counter, item, admin){
+    diskPub64.mntCount: 0
+    diskDk.mntFull: false
+    diskDk.collect: true
+    call IsMounted(=)
 
-    CollectMode: 0
+    diskDk.collect: false
 }
 
 // IsVirtual: is $base the name of a virtual device (loop0, ram0, zram0, dm-0, sr0, fd0, md0, nbd0)? carry = 1: yes
-public methode IsVirtual(solid base, temp, counter){
-    prepare $base@Text, $pTemp@Text: "loop" call String.StrStarts(solid base, solid temp, focus counter)
+prepare $pBase@Name
+public methode IsVirtual(keep base, temp, counter){
+    prepare $base, $pTemp@Prefix: "loop" call String.StrStarts(=)
     goto_flag carry Yes
 
-    prepare $base, $pTemp: "ram" call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "ram" call String.StrStarts(=)
     goto_flag carry Yes
 
-    prepare $base, $pTemp: "zram" call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "zram" call String.StrStarts(=)
     goto_flag carry Yes
 
-    prepare $base, $pTemp: "dm-" call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "dm-" call String.StrStarts(=)
     goto_flag carry Yes
 
-    prepare $base, $pTemp: "sr" call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "sr" call String.StrStarts(=)
     goto_flag carry Yes
 
-    prepare $base, $pTemp: "fd" call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "fd" call String.StrStarts(=)
     goto_flag carry Yes
 
-    prepare $base, $pTemp: "md" call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "md" call String.StrStarts(=)
     goto_flag carry Yes
 
-    prepare $base, $pTemp: "nbd" call String.StrStarts(solid base, solid temp, focus counter)
+    prepare $base, $pTemp: "nbd" call String.StrStarts(=)
     goto_flag carry Yes
 
     unset_carry
     return
 
-    ->Yes
+    ->Yes->
         set_carry
 }
 
 // Pad: prints the text $base and fills it with spaces up to $work characters.
-public methode Pad(_, base, work@Width){
-    PadWidth: $work
-    prepare $base@Text call String.StrLen(solid base, focus _)
+prepare $pBase@Text, $work@Width
+public methode Pad(_, base, work@Width, item, admin){
+    diskPri64.padWidth: $work
+    prepare $base@Text call String.StrLen(=)
 
     $work: _
-    prepare $base call Basic.Print(solid base)
+    prepare $base call Basic.Print(=)
 
-    ->Fill
-        compare($work@Count >= PadWidth) goto_true Done
+    ->Fill->
+        compare($work@Count >= diskPri64.padWidth) goto_true Done
 
-        prepare $pBase@Text: " " call Basic.Print(solid base)
+        prepare $pBase@Text: " " call Basic.Print(=)
 
         $work++
         goto Fill↑
 
-    ->Done
+    ->Done->
 }
 
 // PadLeft: prints the text $base right-aligned in a field of $work characters.
-public methode PadLeft(_, base@Text, work@Width, counter){
-    PadText: $base
-    PadWidth: $work
-    prepare $base call String.StrLen(solid base, focus _)
+prepare $pBase@Text, $work@Width
+public methode PadLeft(_, base@Text, work@Width, counter, item, admin){
+    diskPri64.padText: $base
+    diskPri64.padWidth: $work
+    prepare $base call String.StrLen(=)
 
     $counter: _
-    $work: PadWidth
+    $work: diskPri64.padWidth
 
-    ->Fill
+    ->Fill->
         compare($work@Fill <= $counter@Len) goto_true Show
 
-        prepare $pBase@Text: " " call Basic.Print(solid base)
+        prepare $pBase@Text: " " call Basic.Print(=)
 
         $work--
         goto Fill↑
 
-    ->Show
-        prepare $base@PadText: PadText call Basic.Print(solid base)
+    ->Show->
+        $base: diskPri64.padText
+        prepare $base@PadText call Basic.Print(=)
 }
 
 // Show: one table row for the drive Name (the properties must have been read with Load).
-public methode Show(_, base, temp, work, index, value, counter){
-    $value: Numbered
-    compare($value = 0) goto_true Plain
+public methode Show(_, base, temp, work, index, value, counter, item, admin){
+    compare (diskDk.numbered) goto_flag not_carry Plain
 
     // number of the row ("  1) ", "  2) " ...)
-    prepare $pBase@Text: "  " call Basic.Print(solid base)
+    prepare $pBase@Text: "  " call Basic.Print(=)
 
     $pBase: Num
-    prepare $base, $value: ShowNo call Basic.ItoA(_, solid base, solid value)
+    prepare $base, $value@Number: diskPri64.showNo call Basic.ItoA(=)
 
-    prepare $pBase: Num call Basic.Print(solid base)
+    prepare $pBase: Num call Basic.Print(=)
 
-    prepare $pBase: ") " call Basic.Print(solid base)
+    prepare $pBase: ") " call Basic.Print(=)
     goto Number
 
-    ->Plain
-        prepare $pBase@Text: "  " call Basic.Print(solid base)
+    ->Plain->
+        prepare $pBase@Text: "  " call Basic.Print(=)
 
-    ->Number
-        $pBase: Name
-        $work: 12
-        call Pad(_, base, work)
+    ->Number->
+        prepare $pBase@Text: Name, $work@Width: 12
+        call Pad(=)
 
         $pBase: Num
-        $value: Sectors
+        $value: diskPub64.sectors
         $value /: 2048
-        prepare $base, $value call Basic.ItoA(_, solid base, solid value)
+        prepare $base, $value call Basic.ItoA(=)
 
-        $pBase: Num
-        $work: 8
-        call PadLeft(_, base, work, counter)
+        prepare $pBase: Num, $work: 8
+        call PadLeft(=)
 
-        prepare $pBase@Text: " MiB  " call Basic.Print(solid base)
+        prepare $pBase: " MiB  " call Basic.Print(=)
 
-        $value: IsRemovable
-        compare($value = 1) goto_true Rem
+        compare (diskDk.removable) goto_true Rem
 
-        prepare $pBase: "fixed      " call Basic.Print(solid base)
+        prepare $pBase: "fixed      " call Basic.Print(=)
         goto Mod
 
-    ->Rem
-        prepare $pBase@Text: "removable  " call Basic.Print(solid base)
+    ->Rem->
+        prepare $pBase@Text: "removable  " call Basic.Print(=)
 
-    ->Mod
-        call Model(_, base, temp, work, counter)
+    ->Mod->
+        call Model(=)
 
-        $pBase: Text
-        $work: 28
-        call Pad(_, base, work)
+        prepare $pBase@Text: Text, $work@Width: 28
+        call Pad(=)
 
-        call IsMounted(_, base, temp, work, index, value, counter)
+        call IsMounted(=)
         goto_flag carry Mnt
 
-        prepare $pBase@Text: "\n" call Basic.Print(solid base)
+        prepare $pBase@Text: "\n" call Basic.Print(=)
         return
 
-    ->Mnt
-        prepare $pBase@Text: "MOUNTED\n" call Basic.Print(solid base)
+    ->Mnt->
+        prepare $pBase@Text: "MOUNTED\n" call Basic.Print(=)
 }
 
 // SortNames: sorts the names in Names (ListCount of them, 32 bytes each) alphabetically, so the numbers stay stable.
-public methode SortNames(base, temp, work, index, counter, value){
+public methode SortNames(base, temp, work, index, counter, item, admin){
     $index: 1
 
-    ->Outer
-        $value: ListCount
-        compare($index@Outer >= $value) goto_true Done
+    ->Outer->
+        compare($index@Outer >= diskPub64.listCount) goto_true Done
 
         // SortTmp = Names[index]
         $work: $index
@@ -698,11 +677,11 @@ public methode SortNames(base, temp, work, index, counter, value){
         $pTemp: Names
         $pTemp +: $work
         prepare $pBase@SortTmp: SortTmp, $temp
-        call String.StrCopy(solid base, solid temp, focus counter)
+        call String.StrCopy(=)
 
         $work: $index
 
-    ->Inner
+    ->Inner->
         compare($work@Pos = 0) goto_true Place
 
         // compare Names[work-1] with SortTmp
@@ -712,10 +691,10 @@ public methode SortNames(base, temp, work, index, counter, value){
         $pBase: Names
         $pBase +: $counter
         prepare $base, $pTemp@SortTmp: SortTmp
-        call String.StrCompare(solid base, solid temp, focus counter)
+        call String.StrCompare(=)
         goto_flag carry Place
 
-        compare($counter@Cmp > 255) goto_true Place     // negative = Names[work-1] already comes first
+        compare($counter > 255) goto_true Place     // negative = Names[work-1] already comes first
 
         // Names[work] = Names[work-1]
         $counter: $work
@@ -728,110 +707,109 @@ public methode SortNames(base, temp, work, index, counter, value){
         $pTemp: Names
         $pTemp +: $counter
         prepare $base, $temp
-        call String.StrCopy(solid base, solid temp, focus counter)
+        call String.StrCopy(=)
 
         $work--
         goto Inner↑
 
-    ->Place
+    ->Place->
         $work <<: 5
         $pBase: Names
         $pBase +: $work@Offset
         prepare $base, $pTemp@SortTmp: SortTmp
-        call String.StrCopy(solid base, solid temp, focus counter)
+        call String.StrCopy(=)
 
         $index++
         goto Outer↑
 
-    ->Done
+    ->Done->
 }
 
 // List: prints a table of the drives. ListAll = 0: only removable drives, 1: all (except virtual devices).
 // Result: ListCount = number of rows. carry = 0: /sys/block cannot be read.
-public methode List(_, base, temp, work, index, value, counter){
-    ListCount: 0
+public methode List(_, base, temp, work, index, value, counter, item, admin){
+    diskPub64.listCount: 0
     $pBase: "/sys/block"
     prepare 65536, 0, $base@Text
-    call Sys.Open(_, focus counter)
+    call Sys.Open(=)
     goto_flag not_carry Fail
 
-    DirFd: $counter@Fd
+    diskPri64.dirFd: $counter@Fd
 
-    ->More
-        $base: DirFd
+    ->More->
+        $base: diskPri64.dirFd
         $pTemp: Dents
         prepare 4096, $base, $temp
-        call Sys.GetDents(_, focus counter)
+        call Sys.GetDents(=)
         goto_flag not_carry Done
 
         compare($counter@Got = 0) goto_true Done
 
-        DentsLen: $counter
-        DentsPos: 0
+        diskPri64.dentsLen: $counter
+        diskPri64.dentsPos: 0
 
-    ->Entry
-        $index: DentsPos
-        compare($index >= DentsLen)
+    ->Entry->
+        $index: diskPri64.dentsPos
+        $work: diskPri64.dentsLen
+        compare($index >= $work)
         goto_true More↑
 
         $pBase: Dents
         $pBase +: $index                     // start of the entry
         _: $pBase[16]                        // d_reclen, low byte
-        $work: $pBase[17]                    // high byte
+        $work@RecLen: $pBase[17]             // high byte
         $work <<: 8
         $work +: _
-        $index +: $work@Len
-        DentsPos: $index                     // next entry
+        $index +: $work@RecLen
+        diskPri64.dentsPos: $index                     // next entry
         $base +: 19                          // name
         
         _: $pBase[0]
         compare(_ = 46) 
         goto_true Entry↑     // "." and ".." and hidden names
 
-        call IsVirtual(solid base, temp, counter)
+        prepare $base
+        call IsVirtual(=)
         goto_flag carry Entry↑
 
         $temp: $base
         $pBase: Name
         prepare $base, $temp, 32
-        call String.StrCopyN(solid base, solid temp, focus counter)
+        call String.StrCopyN(=)
         goto_flag not_carry Entry↑           // name too long
 
-        call Load(_, base, temp, work, counter)
+        call Load(=)
         goto_flag not_carry Entry↑
 
-        $value: IsRemovable
-        compare($value = 1) goto_true Take
+        compare (diskDk.removable) goto_true Take
 
-        $value: ListAll
-        compare($value = 0) goto_true Entry↑
+        compare (diskDk.listAll) goto_flag not_carry Entry↑
 
-    ->Take
-        $value: ListCount
+    ->Take->
+        $value: diskPub64.listCount
         compare($value >= 16) goto_true Entry↑      // more than 16 drives are not offered
 
         $value <<: 5
         $pBase: Names
         $pBase +: $value
         prepare $base, $pTemp@Name: Name
-        call String.StrCopy(solid base, solid temp, focus counter)
+        call String.StrCopy(=)
 
-        ListCount++
+        diskPub64.listCount++
         goto Entry↑
 
-    ->Done
-        $base: DirFd
+    ->Done->
+        $base: diskPri64.dirFd
         prepare $base
-        call Sys.Close(_, focus counter)
+        call Sys.Close(=)
 
-        call SortNames(base, temp, work, index, counter, value)
+        call SortNames(=)
 
         // print the table: read the properties of every drive again
         $index: 0
 
-    ->Rows
-        $value: ListCount
-        compare($index@Row >= $value)
+    ->Rows->
+        compare($index@Row >= diskPub64.listCount)
         goto_true Shown
 
         $work: $index
@@ -839,31 +817,31 @@ public methode List(_, base, temp, work, index, value, counter){
         $pTemp: Names
         $pTemp +: $work
         prepare $pBase@Name: Name, $temp
-        call String.StrCopy(solid base, solid temp, focus counter)
+        call String.StrCopy(=)
 
-        DentsPos: $index                     // counter of the display (Dents is not needed any more)
-        call Load(_, base, temp, work, counter)
+        diskPri64.dentsPos: $index                     // counter of the display (Dents is not needed any more)
+        call Load(=)
 
-        $index: DentsPos
-        ShowNo: $index
-        ShowNo++
-        call Show(_, base, temp, work, index, value, counter)
+        $index: diskPri64.dentsPos
+        $index++
+        diskPri64.showNo: $index
+        call Show(=)
 
-        $index: ShowNo
+        $index: diskPri64.showNo
         goto Rows↑
 
-    ->Shown
-        $value: ListCount
+    ->Shown->
+        $value: diskPub64.listCount
         compare($value != 0)
         goto_true Listed
 
         prepare $pBase@Text: "  (no drives found)\n"
-        call Basic.Print(solid base)
+        call Basic.Print(=)
 
-    ->Listed
+    ->Listed->
         set_carry
         return
 
-    ->Fail
+    ->Fail->
         unset_carry
 }
