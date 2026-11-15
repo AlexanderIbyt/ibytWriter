@@ -66,7 +66,6 @@ public methode ReadNum(_, base, temp, focus work, counter, item, admin){
 }
 
 // CheckName: is $base a valid drive name? Allowed: a-z, 0-9, _ ; 1 to 31 characters. carry = 1: yes
-// ****************This Methode ist not activated. DeadCode****************
 prepare $pBase@Name
 public methode CheckName(_, base, work){
     $work: 0
