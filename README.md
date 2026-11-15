@@ -2,7 +2,7 @@
 
 ibytWriter writes a boot image (such as `MyProgram.img`, built with the ibyt compiler in `ibyt_bare` mode) to a USB stick, so that a PC can start it without any operating system.
 
-It is written in [ibyt](https://ibyt.tech/) and runs on **Linux** (x86-64). It is a small static program (about 19 KB): no libc, no other dependencies.
+It is written in [ibyt](https://ibyt.tech/) and runs on **Linux** (x86-64). It is a small static program (about 14 KB): no libc, no other dependencies.
 
 > **Warning:** ibytWriter overwrites everything on the drive you choose. Check the number and the model name before you confirm. There is no undo.
 
@@ -27,7 +27,7 @@ ibytWriter needs root rights to write to a drive. Without `sudo` it stops at onc
 - Only removable drives. Fixed disks are refused unless you add `--allow-fixed`.
 - Never a drive that is mounted: ibytWriter offers to unmount it, or refuses.
 - Never a write-protected drive, and only if the image fits.
-- Always a confirmation (`y`), except with `--yes`.
+- Always a confirmation (`y`, or the drive name when you give the drive on the command line), except with `--yes`.
 - The result is verified by reading it back.
 
 ## More options
@@ -52,7 +52,7 @@ ibytwriter --help
 
 ## Build
 
-You need the ibyt compiler. Put the `library/` folder of the ibyt project next to the source files and run the compiler in this folder:
+You need the ibyt compiler, `nasm` and `ld`. Put the `library/` folder of the ibyt project next to the source files and run the compiler in this folder:
 
 ```
 Main.ibyt  Disk.ibyt  library/
@@ -75,6 +75,5 @@ ibytWriter has automatic tests (about 175 checks with loop devices, fake drives 
 MIT, see [LICENSE](LICENSE). The license covers ibytWriter. The ibyt compiler and its library are separate and have their own terms.
 
 ## Author
-(c) Alexander Zima , https://www.ibyt.tech
 
 Alexander Zima, creator of the [ibyt](https://ibyt.tech/) programming language.
