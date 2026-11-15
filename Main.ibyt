@@ -30,242 +30,224 @@ public byte BufB[65536]               // chunk read back from the target (verify
 public byte Line[256]                 // one line typed by the user
 public byte Nl[2]                     // the newline character (set in Start)
 
-public int64 ImagePath: 0             // path of the image file (command line)
-public int64 TargetPath: 0            // drive name or file name given on the command line (0 = none)
-public int64 TargetOpen: 0            // path that is really opened: /dev/<name> or the file
-public int64 FYes: 0                  // switch --yes
-public int64 FAll: 0                  // switch --all
-public int64 FList: 0                 // switch --list
-public int64 FFixed: 0                // switch --allow-fixed
-public int64 FRaw: 0                  // switch --raw
-public int64 FHelp: 0                 // switch --help
-public int64 TargetIsDev: 0           // 1 = the target is a drive, 0 = a file
-public int64 ImageFd: 0               // file descriptor of the image
-public int64 TargetFd: 0              // file descriptor of the target
-public int64 ImageSize: 0             // size of the image in bytes
-public int64 Total: 0                 // bytes written / compared so far
-public int64 Chunk: 0                 // bytes in the current chunk
-public int64 Padded: 0                // Chunk rounded up to full 512-byte sectors
-public int64 DieMsg: 0                // message text kept by Die
-public int64 ArgNo: 0                 // index of the argument being parsed
-public int64 ArgPtr: 0                // pointer to the current argument / to the expected answer
-public int64 MountNo: 0               // counter while unmounting
-public int64 UmountErr: 0             // error code of the last unmount
-public int64 FNoWipe: 0               // switch --no-wipe
-public int64 WipeNo: 0                // 64 KiB blocks written so far by WipeMiB
+// No single variables: switches are flag containers, all numbers live in the data container Run
+private flag mainOpt{ yes, all, list, fixed, raw, help, noWipe }   // command line switches
+private flag mainTgt{ isDev }                                      // isDev: the target is a drive, not a file
+private int64 mainPri64{ imagePath, targetPath, targetOpen, imageFd, targetFd, imageSize, total, chunk, padded, dieMsg, argNo, argPtr, mountNo, umountErr, wipeNo }
+
 
 // ErrText: writes the text in $base to the error output (stderr).
 prepare $pBase@Text
-public methode ErrText(_, base, temp, work, counter){
+public methode ErrText(_, base, temp, work, counter, admin){
     // length of the text first, then write(2, text, length)
     $temp: $base
     prepare $base 
-    call String.StrLen(solid base, focus _)
+    call String.StrLen(=)
 
     $work: _
     $base@Stderr: 2
     prepare $work, $base, $temp
-    call Sys.Write(_, focus counter)
+    call Sys.Write(=)
 }
 
 // Die: prints "ibytwriter: error: <text>" and ends the program with exit code 1. $base = text.
 prepare $pBase@Text
-public methode Die(_, base, temp, work, counter){
-    DieMsg: $base
+public methode Die(_, base, temp, work, counter, admin){
+    mainPri64.dieMsg: $base
     
     prepare "ibytwriter: error: "
-    call ErrText(_, base, temp, work, counter)
+    call ErrText(=)
 
-    prepare DieMsg
-    call ErrText(_, base, temp, work, counter)
+    $base: mainPri64.dieMsg
+    prepare $base
+    call ErrText(=)
 
-    prepare Nl
-    call ErrText(_, base, temp, work, counter)
+    prepare $pBase: Nl                  // $pBase = the ADDRESS of Nl ("prepare Nl" would pass the value 10 and crash)
+    call ErrText(=)
 
-    prepare $base@Code: 1 
-    call Sys.Exit(solid base)
+    prepare $base: 1 
+    call Sys.Exit(=)
 }
 
 // Usage: prints the help text (also shown when the image argument is missing).
-public methode Usage(base){
-    prepare $pBase@Text: "ibytWriter " call Basic.Print(solid base)
+public methode Usage(base, item, admin){
+    prepare $pBase@Text: "ibytWriter " call Basic.Print(=)
 
-    prepare $pBase: VERSION call Basic.Print(solid base)
+    prepare $pBase: VERSION call Basic.Print(=)
 
-    prepare $pBase: " - writes an ibyt boot image (MyProgram.img) to a USB stick\n\n" call Basic.Print(solid base)
+    prepare $pBase: " - writes an ibyt boot image (MyProgram.img) to a USB stick\n\n" call Basic.Print(=)
 
-    prepare $pBase: "  ibytwriter <image>\n\n" call Basic.Print(solid base)
+    prepare $pBase: "  ibytwriter <image>\n\n" call Basic.Print(=)
 
-    prepare $pBase: "ibytWriter lists the USB drives, you choose one by number and confirm with y.\n" call Basic.Print(solid base)
+    prepare $pBase: "ibytWriter lists the USB drives, you choose one by number and confirm with y.\n" call Basic.Print(=)
 
-    prepare $pBase: "Start it as root (sudo) so it may write to the drive. Everything on the chosen drive is overwritten:\n" call Basic.Print(solid base)
+    prepare $pBase: "Start it as root (sudo) so it may write to the drive. Everything on the chosen drive is overwritten:\n" call Basic.Print(=)
 
-    prepare $pBase: "the first and last MiB are cleared first (old partition tables, file system leftovers), then the image is written.\n\n" call Basic.Print(solid base)
+    prepare $pBase: "the first and last MiB are cleared first (old partition tables, file system leftovers), then the image is written.\n\n" call Basic.Print(=)
 
-    prepare $pBase: "More options (for scripts and tests):\n" call Basic.Print(solid base)
+    prepare $pBase: "More options (for scripts and tests):\n" call Basic.Print(=)
 
-    prepare $pBase: "  ibytwriter <image> <drive|file> [--yes] [--allow-fixed] [--raw] [--no-wipe]\n" call Basic.Print(solid base)
+    prepare $pBase: "  ibytwriter <image> <drive|file> [--yes] [--allow-fixed] [--raw] [--no-wipe]\n" call Basic.Print(=)
 
-    prepare $pBase: "  ibytwriter --list [--all]\n\n" call Basic.Print(solid base)
+    prepare $pBase: "  ibytwriter --list [--all]\n\n" call Basic.Print(=)
 
-    prepare $pBase: "  <drive>        a whole removable drive, e.g. sdb or /dev/sdb (not a partition like sdb1)\n" call Basic.Print(solid base)
+    prepare $pBase: "  <drive>        a whole removable drive, e.g. sdb or /dev/sdb (not a partition like sdb1)\n" call Basic.Print(=)
 
-    prepare $pBase: "  <file>         anything else is treated as a file; the image is written to its beginning\n" call Basic.Print(solid base)
+    prepare $pBase: "  <file>         anything else is treated as a file; the image is written to its beginning\n" call Basic.Print(=)
 
-    prepare $pBase: "  --yes          do not ask for confirmation\n" call Basic.Print(solid base)
+    prepare $pBase: "  --yes          do not ask for confirmation\n" call Basic.Print(=)
 
-    prepare $pBase: "  --allow-fixed  also allow drives that are not marked removable (never a mounted one)\n" call Basic.Print(solid base)
+    prepare $pBase: "  --allow-fixed  also allow drives that are not marked removable (never a mounted one)\n" call Basic.Print(=)
 
-    prepare $pBase: "  --raw          do not require the boot signature (55 AA) at byte 510\n" call Basic.Print(solid base)
+    prepare $pBase: "  --raw          do not require the boot signature (55 AA) at byte 510\n" call Basic.Print(=)
 
-    prepare $pBase: "  --no-wipe      do not clear the first and last MiB of the drive before writing\n" call Basic.Print(solid base)
+    prepare $pBase: "  --no-wipe      do not clear the first and last MiB of the drive before writing\n" call Basic.Print(=)
 
-    prepare $pBase: "  --list         show the removable drives (--all: all real drives)\n\n" call Basic.Print(solid base)
+    prepare $pBase: "  --list         show the removable drives (--all: all real drives)\n\n" call Basic.Print(=)
 }
 
 // ParseArgs: splits the command line into the switches and the two paths (image, target).
-public methode ParseArgs(_, base, temp, work, counter, value){
-    ArgNo: 1
+public methode ParseArgs(_, base, temp, work, counter, value, item, admin){
+    mainPri64.argNo: 1
 
-    ->Next
-        $base: ArgNo
-        compare($base >= Args.Count) goto_true Done
+    ->Next->
+        $base: mainPri64.argNo
+        compare($base >= Args.argsPub64.Count) goto_true Done
 
         // $base = pointer to the argument with the number ArgNo
-        prepare $base call Args.Get(_, base)
+        prepare $base call Args.Get(=)
 
-        ArgPtr: $base
+        mainPri64.argPtr: $base
+        
         // arguments that do not start with -- are positional (first the image, then the target)
-        prepare $base, $pTemp@Text: "--" call String.StrStarts(solid base, solid temp, focus counter)
+        prepare $base, $pTemp@Text: "--" call String.StrStarts(=)
         goto_flag not_carry Positional
 
-        prepare $base: ArgPtr, $pTemp: "--yes" call String.StrEqual(solid base, solid temp, focus counter)
+        $base: mainPri64.argPtr
+        prepare $base, $pTemp: "--yes" call String.StrEqual(=)
         goto_flag carry IsYes
 
-        prepare $base, $pTemp: "--all" call String.StrEqual(solid base, solid temp, focus counter)
+        prepare $base, $pTemp: "--all" call String.StrEqual(=)
         goto_flag carry IsAll
 
-        prepare $base, $pTemp: "--list" call String.StrEqual(solid base, solid temp, focus counter)
+        prepare $base, $pTemp: "--list" call String.StrEqual(=)
         goto_flag carry IsList
 
-        prepare $base, $pTemp: "--allow-fixed" call String.StrEqual(solid base, solid temp, focus counter)
+        prepare $base, $pTemp: "--allow-fixed" call String.StrEqual(=)
         goto_flag carry IsFixed
 
-        prepare $base, $pTemp: "--raw" call String.StrEqual(solid base, solid temp, focus counter)
+        prepare $base, $pTemp: "--raw" call String.StrEqual(=)
         goto_flag carry IsRaw
 
-        prepare $base, $pTemp: "--no-wipe" call String.StrEqual(solid base, solid temp, focus counter)
+        prepare $base, $pTemp: "--no-wipe" call String.StrEqual(=)
         goto_flag carry IsNoWipe
 
-        prepare $base, $pTemp: "--help" call String.StrEqual(solid base, solid temp, focus counter)
+        prepare $base, $pTemp: "--help" call String.StrEqual(=)
         goto_flag carry IsHelp
 
         // anything else starting with -- is unknown
         prepare $pBase: "unknown option (try --help)"
         call Die(=)
 
-    ->IsYes
-        FYes: 1
+    ->IsYes->
+        mainOpt.yes: true
         goto Advance
 
-    ->IsAll
-        FAll: 1
+    ->IsAll->
+        mainOpt.all: true
         goto Advance
 
-    ->IsList
-        FList: 1
+    ->IsList->
+        mainOpt.list: true
         goto Advance
 
-    ->IsFixed
-        FFixed: 1
+    ->IsFixed->
+        mainOpt.fixed: true
         goto Advance
 
-    ->IsRaw
-        FRaw: 1
+    ->IsRaw->
+        mainOpt.raw: true
         goto Advance
 
-    ->IsNoWipe
-        FNoWipe: 1
+    ->IsNoWipe->
+        mainOpt.noWipe: true
         goto Advance
 
-    ->IsHelp
-        FHelp: 1
+    ->IsHelp->
+        mainOpt.help: true
         goto Advance
 
-    ->Positional
+    ->Positional->
         // positional argument: the first is the image, the second the target
-        $value: ImagePath
+        $value: mainPri64.imagePath
         compare($value != 0) goto_true Second
 
-        ImagePath: $base@Arg
+        mainPri64.imagePath: $base@Arg
         goto Advance
 
-    ->Second
-        $value: TargetPath
+    ->Second->
+        $value: mainPri64.targetPath
         compare($value != 0) goto_true Third
 
-        TargetPath: $base@Arg
+        mainPri64.targetPath: $base@Arg
         goto Advance
 
-    ->Third
+    ->Third->
         prepare $pBase@Text: "too many arguments (try --help)"
         call Die(=)
 
-    ->Advance
-        $base: ArgNo
-        $base++
-        ArgNo: $base
+    ->Advance->
+        mainPri64.argNo++
         goto Next↑
 
-    ->Done
+    ->Done->
 }
 
 // OpenImage: opens the image, checks that it is not empty and carries the boot signature (55 AA at byte 510).
-public methode OpenImage(_, base, temp, work, index, counter, value){
+public methode OpenImage(_, base, temp, work, index, counter, value, admin){
 
-    $base: ImagePath
+    $base: mainPri64.imagePath
     prepare 0, 0, $base
-    call Sys.Open(_, focus counter)
+    call Sys.Open(=)
     goto_flag carry Opened
 
     prepare $pBase: "cannot open the image file"
     call Die(=)
 
-    ->Opened
-        ImageFd: $counter@Fd
-        $base: ImageFd
+    ->Opened->
+        mainPri64.imageFd: $counter@Fd
+        $base: mainPri64.imageFd
 
         // seek to the end: the position is the file size
         prepare 0, 2, $base
-        call Sys.Seek(_, focus counter)
+        call Sys.Seek(=)
 
-        ImageSize: $counter@Size
-        $value: ImageSize
+        mainPri64.imageSize: $counter                // Seek returns the position = the file size
+        $value: mainPri64.imageSize
         compare($value != 0) goto_true NotEmpty
 
         prepare $pBase: "the image file is empty"
         call Die(=)
 
-    ->NotEmpty
-        $base: ImageFd
+    ->NotEmpty->
+        $base: mainPri64.imageFd
         prepare 0, 0, $base
-        call Sys.Seek(_, focus counter)
+        call Sys.Seek(=)
 
         // read the first sector: the boot signature is checked in it
-        $base: ImageFd
+        $base: mainPri64.imageFd
         $pTemp: BufA
-        prepare $base, $temp, $work@Size: 512 call Sys.ReadFull(_, base, temp, work, index, counter)
+        prepare $base, $temp, $work@Size: 512 call Sys.ReadFull(=)
 
         // --raw: no signature check
-        $value: FRaw
-        compare($value = 1) goto_true Rewind
+        compare (mainOpt.raw) goto_true Rewind
 
         compare($counter@Got = 512) goto_true Sized
 
         prepare $pBase: "the image is smaller than one sector - not a boot image (use --raw to write it anyway)"
         call Die(=)
 
-    ->Sized
+    ->Sized->
         $pBase: BufA
         $work@Offset: 510
         _: $pBase[$work]
@@ -275,338 +257,322 @@ public methode OpenImage(_, base, temp, work, index, counter, value){
         _: $pBase[$work]
         compare(_ = 170) goto_true Rewind    // 0xAA
 
-    ->NoSig
+    ->NoSig->
         prepare $pBase@Text: "the image has no boot signature (55 AA at byte 510) - not a bootable image (use --raw to write it anyway)"
         call Die(=)
 
-    ->Rewind
-        $base: ImageFd
+    ->Rewind->
+        $base: mainPri64.imageFd
         prepare 0, 0, $base
-        call Sys.Seek(_, focus counter)
+        call Sys.Seek(=)
 }
 
 // CheckTarget: decides drive or file and checks every safety condition.
-public methode CheckTarget(_, base, temp, work, index, counter, value){
-    TargetIsDev: 0
+public methode CheckTarget(_, base, temp, work, index, counter, value, item, admin){
+    mainTgt.isDev: false
     // a name with /dev/ in front is certainly meant as a drive
-    prepare $base@TargetPath: TargetPath, $pTemp@Text: "/dev/" call String.StrStarts(solid base, solid temp, focus counter)
+    $base: mainPri64.targetPath
+    prepare $base@TargetPath, $pTemp@Text: "/dev/" call String.StrStarts(=)
     goto_flag carry DevPath
 
     // without /dev/: a drive name only if there is no '/' in it and /sys/block/<Name> exists
-    $base: TargetPath // ??? del
     prepare $base, 47
-    call String.StrFindChar(solid base, focus counter)
+    call String.StrFindChar(=)
     goto_flag carry IsFile
 
-    $base: TargetPath // ??? del
     goto TryName
 
-    ->DevPath
-        TargetIsDev: 1
-        $base: TargetPath
+    ->DevPath->
+        mainTgt.isDev: true
+        $base: mainPri64.targetPath
         $base +: 5
 
-    ->TryName
+    ->TryName->
         $temp: $base@Name
         $pBase: Disk.Name
         prepare $base, $temp, 32
-        call String.StrCopyN(solid base, solid temp, focus counter)
+        call String.StrCopyN(=)
         goto_flag carry NameCopied
 
-        $value: TargetIsDev
-        compare($value = 1) goto_true BadName
+        compare (mainTgt.isDev) goto_true BadName
         goto NoDrive
 
-    ->NameCopied
+    ->NameCopied->
         $pBase: Disk.Name
         prepare $base
-        call Disk.CheckName(_, base, work)
+        call Disk.CheckName(=)
         goto_flag carry NameOk
 
-        $value: TargetIsDev
-        compare($value = 1) goto_true BadName
+        compare (mainTgt.isDev) goto_true BadName
         goto NoDrive
 
-    ->NameOk
-        call Disk.Exists(_, base, temp, counter)
+    ->NameOk->
+        call Disk.Exists(=)
         goto_flag carry ItsADrive
 
-        $value: TargetIsDev
-        compare($value = 1) goto_true NotWhole
+        compare (mainTgt.isDev) goto_true NotWhole
         goto NoDrive
 
-    ->ItsADrive
-        TargetIsDev: 1
-        call Disk.Load(_, base, temp, work, counter)
+    ->ItsADrive->
+        mainTgt.isDev: true
+        call Disk.Load(=)
         goto_flag carry Loaded
 
         prepare $pBase@Text: "cannot read the properties of the drive from /sys/block"
         call Die(=)
 
-    ->Loaded
+    ->Loaded->
         // refuse write-protected drives, and drives that are not removable unless --allow-fixed
-        $value: Disk.IsReadOnly
-        compare($value = 0) goto_true Writable
+        compare (Disk.diskDk.readOnly) goto_flag not_carry Writable
 
         prepare $pBase@Text: "the drive is write-protected"
         call Die(=)
 
-    ->Writable
-        $value: Disk.IsRemovable
-        compare($value = 1) goto_true RemovableOk
+    ->Writable->
+        compare (Disk.diskDk.removable) goto_true RemovableOk
 
-        $value: FFixed
-        compare($value = 1) goto_true RemovableOk
+        compare (mainOpt.fixed) goto_true RemovableOk
 
         prepare $pBase@Text: "this drive is not marked as removable - refusing (if you are sure it is the right one, add --allow-fixed)"
         call Die(=)
 
-    ->RemovableOk
+    ->RemovableOk->
         // writing and unmounting need root; build /dev/<Name>; if mounted: offer to unmount it
-        call NeedRoot(_, base, temp, work, counter)
+        call NeedRoot(=)
 
-        call Disk.Prefixes(_, base, temp, work, counter)
+        call Disk.Prefixes(=)
 
         $pBase: Disk.Prefix
-        TargetOpen: $base                    // opened is "/dev/<Name>", even if only the name was given
-        call Disk.IsMounted(_, base, temp, work, index, value, counter)
+        mainPri64.targetOpen: $base                    // opened is "/dev/<Name>", even if only the name was given
+        call Disk.IsMounted(=)
         goto_flag not_carry NotMounted
 
-        call HandleMounted(_, base, temp, work, index, counter, value)
+        call HandleMounted(=)
 
-    ->NotMounted
-        $work: Disk.Sectors
+    ->NotMounted->
+        $work: Disk.diskPub64.sectors
         $work <<: 9                          // sectors * 512 = bytes
-        $value: ImageSize
+        $value: mainPri64.imageSize
         compare($work >= $value) goto_true Fits
 
         prepare $pBase@Text: "the image is larger than the drive"
         call Die(=)
 
-    ->Fits
+    ->Fits->
         return
 
-    ->NoDrive
+    ->NoDrive->
         // No drive: allowed as a file only if the name contains a dot (a mistyped drive name never becomes a file)
-        $base: TargetPath
+        $base: mainPri64.targetPath
         prepare $base, 46
-        call String.StrFindChar(solid base, focus counter)
+        call String.StrFindChar(=)
         goto_flag carry IsFile
 
-        prepare $pBase@Text: "unknown drive (no such drive under /sys/block; a file name needs a '/' or a '.')"
+        prepare $pBase: "unknown drive (no such drive under /sys/block; a file name needs a '/' or a '.')"
         call Die(=)
 
-    ->BadName
+    ->BadName->
         prepare $pBase@Text: "not a valid drive name"
         call Die(=)
 
-    ->NotWhole
+    ->NotWhole->
         prepare $pBase@Text: "that is not a whole drive (use e.g. /dev/sdb, not a partition like /dev/sdb1)"
         call Die(=)
 
-    ->IsFile
-        TargetIsDev: 0
-        $base: TargetPath
-        TargetOpen: $base
+    ->IsFile->
+        mainTgt.isDev: false
+        $base: mainPri64.targetPath
+        mainPri64.targetOpen: $base
 }
 
 // NeedRoot: writing to a drive and unmounting need root. Without root the program ends at once with a clear message.
-public methode NeedRoot(_, base, temp, work, counter){
-    call Sys.GetEuid(_, focus counter)
+public methode NeedRoot(_, base, temp, work, counter, admin){
+    call Sys.GetEuid(=)
     compare($counter@Euid = 0) goto_true IsRoot
 
     prepare $pBase@Text: "ibytWriter needs root rights to write to a drive - please start it with sudo, for example: sudo ./ibytWriter <image>"
     call Die(=)
 
-    ->IsRoot
+    ->IsRoot->
 }
 
 // WipeMiB: writes 1 MiB of zeros (16 blocks of 64 KiB from BufB) at the current position of TargetFd.
-public methode WipeMiB(_, base, temp, work, index, counter, value){
-    WipeNo: 0
+public methode WipeMiB(_, base, temp, work, index, counter, value, admin){
+    mainPri64.wipeNo: 0
 
-    ->Next
-        $value: WipeNo
+    ->Next->
+        $value: mainPri64.wipeNo
         compare($value >= 16) goto_true Done
 
         // write one 64 KiB block of zeros
-        $base: TargetFd
+        $base: mainPri64.targetFd
         $pTemp: BufB
-        prepare $base, $temp, $work@Size: 65536 call Sys.WriteFull(_, base, temp, work, index, counter)
+        prepare $base, $temp, $work@Size: 65536 call Sys.WriteFull(=)
         goto_flag carry Written
 
-        prepare $pBase@Text: "clearing the drive failed (is it still plugged in?)"
+        prepare $pBase: "clearing the drive failed (is it still plugged in?)"
         call Die(=)
 
-    ->Written
-        $value: WipeNo
-        $value++
-        WipeNo: $value
-
+    ->Written->
+        mainPri64.wipeNo++
         goto Next↑
 
-    ->Done
+    ->Done->
 }
 
 // WipeEnds: overwrites the first and the last 1 MiB of a drive with zeros (never for files).
 // Removes old partition tables, file system signatures and the GPT backup at the end (leftovers of live sticks),
 // which confuse some BIOS versions. Drives under 4 MiB are not cleared. Skipped with --no-wipe.
-public methode WipeEnds(_, base, temp, work, index, counter, value){
-    $value: TargetIsDev
-    compare($value = 0) goto_true Done
+public methode WipeEnds(_, base, temp, work, index, counter, value, item, admin){
+    compare (mainTgt.isDev) goto_flag not_carry Done
 
-    $value: FNoWipe
-    compare($value = 1) goto_true Done
+    compare (mainOpt.noWipe) goto_true Done
 
-    $work: Disk.Sectors
+    $work: Disk.diskPub64.sectors
     $work <<: 9
     compare($work < 4194304) goto_true Done
 
-    prepare $pBase@Text: "Clearing the first and last MiB of the drive ...\n" call Basic.Print(solid base)
+    prepare $pBase@Text: "Clearing the first and last MiB of the drive ...\n" call Basic.Print(=)
 
     // fill BufB with zeros
     $pBase: BufB
-    prepare $base, $work: 65536, $value: 0 call Basic.FillByte(solid base, solid work, solid value, solid _)
+    prepare $base, $work: 65536, $value@Fill: 0 call Basic.FillByte(=)
 
     // open the drive for writing (O_WRONLY)
-    $base: TargetOpen
+    $base: mainPri64.targetOpen
     $work@Flags: 1
     prepare $work, 0, $base
-    call Sys.Open(_, focus counter)
+    call Sys.Open(=)
     goto_flag carry Opened
 
     prepare $pBase: "cannot open the target for clearing (permission? try sudo)"
     call Die(=)
 
-    ->Opened
-        TargetFd: $counter@Fd
-        call WipeMiB(_, base, temp, work, index, counter, value)
+    ->Opened->
+        mainPri64.targetFd: $counter@Fd
+        call WipeMiB(=)
 
         // second MiB: seek to 1 MiB before the end of the drive
-        $work: Disk.Sectors
+        $work: Disk.diskPub64.sectors
         $work <<: 9
         $work -: 1048576
 
-        $base: TargetFd
+        $base: mainPri64.targetFd
         prepare $work, 0, $base
-        call Sys.Seek(_, focus counter)
+        call Sys.Seek(=)
 
-        call WipeMiB(_, base, temp, work, index, counter, value)
+        call WipeMiB(=)
 
-        $base: TargetFd
+        $base: mainPri64.targetFd
         prepare $base
-        call Sys.Fsync(_, focus counter)
+        call Sys.Fsync(=)
 
-        $base: TargetFd
+        $base: mainPri64.targetFd
         prepare $base
-        call Sys.Close(_, focus counter)
+        call Sys.Close(=)
 
-    ->Done
+    ->Done->
 }
 
 // HandleMounted: the drive (or one of its partitions) is mounted. Shows the mount points, asks whether to unmount,
 // unmounts them (last mounted first) and checks again. With --yes nothing is ever unmounted.
-public methode HandleMounted(_, base, temp, work, index, counter, value){
-    $value: FYes
-    compare($value = 1) goto_true Refuse
+public methode HandleMounted(_, base, temp, work, index, counter, value, item, admin){
+    compare (mainOpt.yes) goto_true Refuse
 
-    call Disk.Collect(_, base, temp, work, index, value, counter)
+    call Disk.Collect(=)
     goto_flag carry Collected
 
-    ->Refuse
+    ->Refuse->
         prepare $pBase@Text: "the drive (or one of its partitions) is mounted or cannot be checked - unmount it first"
         call Die(=)
 
-    ->Collected
-        $value: Disk.MountUnsure
-        compare($value = 1) goto_true Refuse
+    ->Collected->
+        compare (Disk.diskDk.mountUnsure) goto_true Refuse
 
-        $value: Disk.MntFull
-        compare($value = 1) goto_true Refuse
+        compare (Disk.diskDk.mntFull) goto_true Refuse
 
-        prepare $pBase@Text: "\nThe drive " call Basic.Print(solid base)
+        prepare $pBase@Text: "\nThe drive " call Basic.Print(=)
 
-        prepare $base: TargetOpen call Basic.Print(solid base)
+        $base: mainPri64.targetOpen
+        prepare $base call Basic.Print(=)
 
-        prepare $pBase: " is in use (mounted):\n\n" call Basic.Print(solid base)
+        prepare $pBase: " is in use (mounted):\n\n" call Basic.Print(=)
 
         $index: 0
 
-    ->Show
-        $value: Disk.MntCount
-        compare($index@Row >= $value) goto_true Shown
+    ->Show->
+        compare($index@Row >= Disk.diskPub64.mntCount) goto_true Shown
 
         $work: $index
         $work <<: 6
         $pBase: Disk.MntDev
         $pBase +: $work
-        $work: 14
-        call Disk.Pad(_, base, work)
+        prepare $base, $work: 14
+        call Disk.Pad(=)
 
-        prepare $pBase@Text: " ->  " call Basic.Print(solid base)
+        prepare $pBase: " ->  " call Basic.Print(=)
 
         $work: $index
         $work <<: 8
         $pBase: Disk.MntPt
         $pBase +: $work
-        prepare $base call Basic.Print(solid base)
+        prepare $base call Basic.Print(=)
 
-        prepare $pBase: "\n" call Basic.Print(solid base)
+        prepare $pBase: "\n" call Basic.Print(=)
 
         $index++
         goto Show↑
 
-    ->Shown
-        prepare $pBase@Text: "\nibytWriter cannot write to a drive that is in use. Unmount it now? (y/n): " call Basic.Print(solid base)
+    ->Shown->
+        prepare $pBase@Text: "\nibytWriter cannot write to a drive that is in use. Unmount it now? (y/n): " call Basic.Print(=)
 
-        call ReadAnswer(_, base, temp, work, counter)
+        call ReadAnswer(=)
 
         $work: $counter@Len
         compare($work = 0) goto_true No
 
-        _: $pBase@Answer[0]
+        _: $pBase[0]
         compare(_ = 121) goto_true Yes
 
         compare(_ = 89) goto_true Yes
 
-    ->No
+    ->No->
         call Aborted(=)
 
-    ->Yes
+    ->Yes->
     // unmount the entry mounted last first
-        $value: Disk.MntCount
-        MountNo: $value
+        $value: Disk.diskPub64.mntCount
+        mainPri64.mountNo: $value
 
-    ->Unmount
-        $value: MountNo
+    ->Unmount->
+        $value: mainPri64.mountNo
         compare($value = 0) goto_true Unmounted
 
-        $value--
-        MountNo: $value
+        mainPri64.mountNo--
 
-        prepare $pBase@Text: "Unmounting " call Basic.Print(solid base)
+        prepare $pBase@Text: "Unmounting " call Basic.Print(=)
 
-        $work: MountNo
+        $work: mainPri64.mountNo
         $work <<: 8
         $pBase: Disk.MntPt
 
-        $pBase +: $work prepare $base call Basic.Print(solid base)
+        $pBase +: $work prepare $base call Basic.Print(=)
 
-        prepare $pBase: " ... " call Basic.Print(solid base)
+        prepare $pBase: " ... " call Basic.Print(=)
 
-        $work: MountNo
+        $work: mainPri64.mountNo
         $work <<: 8
         $pBase: Disk.MntPt
         $pBase +: $work
         prepare 0, $base
-        call Sys.Umount(_, focus counter)
+        call Sys.Umount(=)
         goto_flag carry Gone
 
-        UmountErr: $counter@Error
+        mainPri64.umountErr: $counter@Error
 
-        prepare $pBase: "\n" call Basic.Print(solid base)
+        prepare $pBase: "\n" call Basic.Print(=)
 
-        $value: UmountErr
+        $value: mainPri64.umountErr
         compare($value = 1) goto_true NeedRoot
 
         compare($value = 13) goto_true NeedRoot
@@ -614,295 +580,302 @@ public methode HandleMounted(_, base, temp, work, index, counter, value){
         prepare $pBase: "cannot unmount it (is a program or a file manager still using it? close it and try again)"
         call Die(=)
 
-    ->NeedRoot
-        prepare $pBase: "cannot unmount it: permission denied - start ibytWriter with sudo"
+    ->NeedRoot->
+        prepare $pBase@Text: "cannot unmount it: permission denied - start ibytWriter with sudo"
         call Die(=)
 
-    ->Gone
-        prepare $pBase@Text: "done\n" call Basic.Print(solid base)
+    ->Gone->
+        prepare $pBase@Text: "done\n" call Basic.Print(=)
         goto Unmount↑
 
-    ->Unmounted
-        call Disk.IsMounted(_, base, temp, work, index, value, counter)
+    ->Unmounted->
+        call Disk.IsMounted(=)
         goto_flag not_carry Free
 
-        prepare $pBase: "the drive is still mounted after unmounting - nothing was written"
+        prepare $pBase@Text: "the drive is still mounted after unmounting - nothing was written"
         call Die(=)
 
-    ->Free
+    ->Free->
 }
 
 // Confirm: shows the summary and asks for the confirmation (unless --yes).
-public methode Confirm(_, base, solid temp, work, counter, value){
-        prepare $pBase@Text: "Image : " call Basic.Print(solid base)
+public methode Confirm(base, temp, work, counter, item, admin){
+        prepare $pBase@Text: "Image : " call Basic.Print(=)
 
-        prepare $base: ImagePath call Basic.Print(solid base)
+        $base: mainPri64.imagePath
+        prepare $base call Basic.Print(=)
 
-        prepare $pBase: "  (" call Basic.Print(solid base)
+        prepare $pBase: "  (" call Basic.Print(=)
 
-        prepare $base: ImageSize call Basic.PrintInt(solid base)
+        $base: mainPri64.imageSize
+        prepare $base call Basic.PrintInt(=)
 
-        prepare $pBase: " bytes)\n" call Basic.Print(solid base)
+        prepare $pBase: " bytes)\n" call Basic.Print(=)
 
-        prepare $pBase: "Target: " call Basic.Print(solid base)
+        prepare $pBase: "Target: " call Basic.Print(=)
 
-        prepare $base: TargetOpen call Basic.Print(solid base)
+        $base: mainPri64.targetOpen
+        prepare $base call Basic.Print(=)
 
-        $value: TargetIsDev
-        compare($value = 1) goto_true ShowDrive
+        compare (mainTgt.isDev) goto_true ShowDrive
 
-        prepare $pBase: "  (file)\n" call Basic.Print(solid base)
+        prepare $pBase: "  (file)\n" call Basic.Print(=)
         goto Ask
 
-    ->ShowDrive
-        prepare $pBase@Text: "  (" call Basic.Print(solid base)
+    ->ShowDrive->
+        prepare $pBase@Text: "  (" call Basic.Print(=)
 
-        $base: Disk.Sectors
+        $base: Disk.diskPub64.sectors
         $base /: 2048
-        prepare $base call Basic.PrintInt(solid base)
+        prepare $base call Basic.PrintInt(=)
 
-        prepare $pBase: " MiB" call Basic.Print(solid base)
+        prepare $pBase: " MiB" call Basic.Print(=)
 
-        call Disk.Model(_, base, temp, work, counter)
+        call Disk.Model(=)
 
         $pBase: Disk.Text
         _: $pBase[0]
         compare(_ = 0) goto_true NoModel
 
-        prepare $pBase: ", " call Basic.Print(solid base)
+        prepare $pBase: ", " call Basic.Print(=)
 
-        prepare $pBase: Disk.Text call Basic.Print(solid base)
+        prepare $pBase: Disk.Text call Basic.Print(=)
 
-    ->NoModel
-        prepare $pBase@Text: ")\n" call Basic.Print(solid base)
+    ->NoModel->
+        prepare $pBase@Text: ")\n" call Basic.Print(=)
 
-    ->Ask
-        $value: FYes
-        compare($value = 1) goto_true Done
+    ->Ask->
+        compare (mainOpt.yes) goto_true Done
 
-        prepare $pBase@Text: "\nEverything on the target at the beginning of the image will be overwritten.\n" call Basic.Print(solid base)
+        prepare $pBase@Text: "\nEverything on the target at the beginning of the image will be overwritten.\n" call Basic.Print(=)
 
-        $value: TargetIsDev
-        compare($value = 1) goto_true AskName
+        compare (mainTgt.isDev) goto_true AskName
 
-        prepare $pBase: "Type yes to continue: " call Basic.Print(solid base)
+        prepare $pBase: "Type yes to continue: " call Basic.Print(=)
 
         $pTemp: "yes"
         goto Read
 
-    ->AskName
-        prepare $pBase@Text: "Type the drive name (" call Basic.Print(solid base)
+    ->AskName->
+        prepare $pBase@Text: "Type the drive name (" call Basic.Print(=)
 
-        prepare $pBase: Disk.Name call Basic.Print(solid base)
+        prepare $pBase: Disk.Name call Basic.Print(=)
 
-        prepare $pBase: ") to continue: " call Basic.Print(solid base)
+        prepare $pBase: ") to continue: " call Basic.Print(=)
 
         $pTemp: Disk.Name
 
-    ->Read
-        ArgPtr: $temp@Expected
+    ->Read->
+        mainPri64.argPtr: $temp@Expected
         $base@Stdin: 0
         $pTemp: Line
         prepare 255, $base, $temp@Line
-        call Sys.Read(_, focus counter)
+        call Sys.Read(=)
         goto_flag not_carry NoAnswer
 
         compare($counter@Got = 0) goto_true NoAnswer
 
         $work: $counter
         $pTemp[$work]: 0
-        prepare $pBase: Line call String.StrTrimEnd(solid base, focus counter)
+        prepare $pBase: Line call String.StrTrimEnd(=)
 
         $pBase: Line
-        prepare $base, $temp: ArgPtr call String.StrEqual(solid base, solid temp, focus counter)
+        $temp: mainPri64.argPtr
+        prepare $base, $temp call String.StrEqual(=)
         goto_flag carry Done
 
         prepare $pBase: "aborted - nothing was written"
         call Die(=)
 
-    ->NoAnswer
-        prepare $pBase: "no confirmation received - nothing was written (use --yes for scripts)"
+    ->NoAnswer->
+        prepare $pBase@Text: "no confirmation received - nothing was written (use --yes for scripts)"
         call Die(=)
 
-    ->Done
+    ->Done->
 }
 
 // WriteImage: copies the image in 64 KiB chunks to the target (padded to full sectors) and secures it with fsync.
-public methode WriteImage(_, base, temp, solid work, index, counter, value){
-    $base: TargetOpen
+public methode WriteImage(base, temp, work, index, counter, value, admin){
+    $base: mainPri64.targetOpen
     $work@Flags: 1                             // O_WRONLY
-    $value: TargetIsDev
-    compare($value = 1) goto_true OpenIt
+    compare (mainTgt.isDev) goto_true OpenIt
 
     $work@Flags: 65                            // Datei: O_WRONLY | O_CREAT
 
-    ->OpenIt
+    ->OpenIt->
         // access rights 420 = 0644 octal
         prepare $work@Flags, 420, $base@Path
-        call Sys.Open(_, focus counter)
+        call Sys.Open(=)
         goto_flag carry Opened
 
         prepare $pBase: "cannot open the target for writing (permission? try sudo)"
         call Die(=)
 
-    ->Opened
-        TargetFd: $counter@Fd
-        Total: 0
+    ->Opened->
+        mainPri64.targetFd: $counter@Fd
+        mainPri64.total: 0
 
-    ->Next
+    ->Next->
         // read the next 64 KiB of the image
-        $base: ImageFd
+        $base: mainPri64.imageFd
         $pTemp: BufA
-        prepare $base, $temp, $work@Size: 65536 call Sys.ReadFull(_, base, temp, work, index, counter)
+        prepare $base, $temp, $work@Size: 65536 call Sys.ReadFull(=)
         goto_flag carry Got
 
         prepare $pBase: "cannot read the image file"
         call Die(=)
 
-    ->Got
+    ->Got->
         // 0 bytes = end of the image
         compare($counter@Got = 0) goto_true Finished
 
         // round the chunk up to full 512-byte sectors
-        Chunk: $counter
+        mainPri64.chunk: $counter
         $work: $counter
         $work +: 511
         $work >>: 9
         $work <<: 9
-        Padded: $work
+        mainPri64.padded: $work
         $pBase: BufA
 
-        $pBase +: Chunk                      // fill the rest up to the full sector with 0
-        $work -: Chunk
-        prepare $base, $work, $value@Fill: 0 call Basic.FillByte(solid base, solid work, solid value, solid _)
+        $pBase +: $counter@Got               // fill the rest up to the full sector with 0
+        $work -: $counter
+        prepare $base, $work, $value@Fill: 0 call Basic.FillByte(=)
 
         // write the padded chunk
-        $base: TargetFd
+        $base: mainPri64.targetFd
         $pTemp: BufA
-        prepare $base, $temp, $work: Padded call Sys.WriteFull(_, base, temp, work, index, counter)
+        $work: mainPri64.padded
+        prepare $base, $temp, $work call Sys.WriteFull(=)
         goto_flag carry Written
 
         prepare $pBase: "writing to the target failed (is the drive still plugged in?)"
         call Die(=)
 
-    ->Written
-        $value: Total
-        $value +: Chunk
-        Total: $value
+    ->Written->
+        $value: mainPri64.total
+        $work: mainPri64.chunk
+        $value +: $work
+        mainPri64.total: $value
         goto Next↑
 
-    ->Finished
-        $base: TargetFd
+    ->Finished->
+        $base: mainPri64.targetFd
         prepare $base
-        call Sys.Fsync(_, focus counter)
+        call Sys.Fsync(=)
 
-        $base: TargetFd
+        $base: mainPri64.targetFd
         prepare $base
-        call Sys.Close(_, focus counter)
+        call Sys.Close(=)
 }
 
 // VerifyImage: reads the target back and compares it byte by byte with the image.
-public methode VerifyImage(_, base, temp, work, index, counter, value){
-    $base: TargetOpen
+public methode VerifyImage(_, base, temp, work, index, counter, value, item, admin){
+    $base: mainPri64.targetOpen
     prepare 0, 0, $base
-    call Sys.Open(_, focus counter)
+    call Sys.Open(=)
     goto_flag carry Opened
 
     prepare $pBase: "cannot reopen the target for verification"
     call Die(=)
 
-    ->Opened
-        TargetFd: $counter@Fd
-        $base: ImageFd
+    ->Opened->
+        mainPri64.targetFd: $counter@Fd
+        $base: mainPri64.imageFd
         prepare 0, 0, $base
-        call Sys.Seek(_, focus counter)
+        call Sys.Seek(=)
 
-        Total: 0
+        mainPri64.total: 0
 
-    ->Next
+    ->Next->
         // read the next chunk of the image
-        $base: ImageFd
+        $base: mainPri64.imageFd
         $pTemp: BufA
         prepare $base, $temp, $work@Size: 65536
         call Sys.ReadFull(_, base, temp, work, index, focus counter)
 
         compare($counter@Got = 0) goto_true Done
 
-        Chunk: $counter
+        mainPri64.chunk: $counter
 
         // read the same amount from the target
-        $base: TargetFd
+        $base: mainPri64.targetFd
         $pTemp: BufB
-        prepare $base, $temp, $work: Chunk call Sys.ReadFull(_, base, temp, work, index, focus counter)
+        $work: mainPri64.chunk
+        prepare $base, $temp, $work call Sys.ReadFull(_, base, temp, work, index, focus counter)
 
-        compare($counter@Got = Chunk) goto_true SameLength
+        compare($counter@Got = mainPri64.chunk) goto_true SameLength
 
         prepare $pBase: "verification failed: the target is shorter than the image"
         call Die(=)
 
-    ->SameLength
+    ->SameLength->
         // compare both chunks
         $pBase: BufA
         $pTemp: BufB
-        prepare $base, $temp, $work@Chunk: Chunk call Mem.Compare(solid base, solid temp, solid work, focus counter)
+        $work: mainPri64.chunk
+        prepare $base, $temp, $work@Chunk call Mem.Compare(=)
         goto_flag carry Same
 
         prepare $pBase: "verification failed: the target differs from the image"
         call Die(=)
 
-    ->Same
-        $value: Total
-        $value +: Chunk
-        Total: $value
+    ->Same->
+        $value: mainPri64.total
+        $work: mainPri64.chunk
+        $value +: $work
+        mainPri64.total: $value
         goto Next↑
 
-    ->Done
-        $base: TargetFd
+    ->Done->
+        $base: mainPri64.targetFd
         prepare $base
-        call Sys.Close(_, focus counter)
+        call Sys.Close(=)
 }
 
 // ReadAnswer: reads a line from the keyboard (Console.ReadLine) and trims spaces at both ends.
 // Result: $base = text, $counter = length. Without input (Ctrl+D, input closed) the program ends.
-public methode ReadAnswer(_, base, temp, work, counter){
-    call Console.ReadLine(focus base, focus counter)
+public methode ReadAnswer(_, focus base, temp, work, focus counter, item, admin){
+    call Console.ReadLine(=)
     goto_flag carry Got
 
-    prepare $pBase@Text: "\n" call Basic.Print(solid base)
+    ->NoInput
+        prepare $pBase@Text: "\n" call Basic.Print(=)
 
-    prepare $pBase: "no input received - nothing was written"
-    call Die(=)
+        prepare $pBase@Text: "no input received - nothing was written"
+        call Die(=)
 
-    ->Got
-        prepare $base@Text call String.StrTrimEnd(solid base, focus counter)
+    ->Got->
+        prepare $base@Text call String.StrTrimEnd(=)
 
-        prepare $base call String.StrSkipSpace(focus base, focus counter)
+        prepare $base call String.StrSkipSpace(=)
 
         // StrSkipSpace returns the number of skipped characters in $counter: determine the length again
-        prepare $base call String.StrLen(solid base, focus _)
+        prepare $base call String.StrLen(=)
 
         $counter: _
 }
 
 // Aborted: prints "nothing was written" and ends the program without error.
-public methode Aborted(base){
-    prepare $pBase@Text: "Aborted - nothing was written.\n" call Basic.Print(solid base)
+public methode Aborted(base, item, admin){
+    prepare $pBase@Text: "Aborted - nothing was written.\n" call Basic.Print(=)
 
-    prepare $base: 0 call Sys.Exit(solid base)
+    prepare $base: 0 call Sys.Exit(=)
 }
 
 // SelectDrive: asks for the number of the drive. Result: TargetPath = name of the chosen drive (e.g. "sdb").
-public methode SelectDrive(_, base, temp, work, index, counter, value){
-    ->Ask
-        prepare $pBase@Text: "\nWhich drive? Enter a number (1-" call Basic.Print(solid base)
+public methode SelectDrive(_, base, temp, work, index, counter, value, item, admin){
+    ->Ask->
+        prepare $pBase@Text: "\nWhich drive? Enter a number (1-" call Basic.Print(=)
 
-        prepare $base: Disk.ListCount call Basic.PrintInt(solid base)
+        $base: Disk.diskPub64.listCount
+        prepare $base call Basic.PrintInt(=)
 
-        prepare $pBase: ") or q to quit: " call Basic.Print(solid base)
+        prepare $pBase: ") or q to quit: " call Basic.Print(=)
 
-        call ReadAnswer(_, base, temp, work, counter)
+        call ReadAnswer(=)
 
-        _: $pBase@Answer[0]
+        _: $pBase[0]
         compare(_ = 113) goto_true Quit        // q
 
         compare(_ = 81) goto_true Quit         // Q
@@ -912,7 +885,7 @@ public methode SelectDrive(_, base, temp, work, index, counter, value){
     // digits only
         $index@Pos: 0
 
-    ->Digits
+    ->Digits->
         _: $pBase@Answer[$index@Pos]
         compare(_ = 0) goto_true Number
 
@@ -923,15 +896,15 @@ public methode SelectDrive(_, base, temp, work, index, counter, value){
         $index++
         goto Digits↑
 
-    ->Number
+    ->Number->
         compare($counter@Len > 3) goto_true Bad
 
         // convert the text to a number and check it against the number of listed drives (1..count)
-        prepare $base@Text call Basic.AtoI(_, solid base, focus work)
+        prepare $base@Text call Basic.AtoI(=)
 
         compare($work@Number = 0) goto_true Bad
 
-        $value: Disk.ListCount
+        $value: Disk.diskPub64.listCount
         compare($work > $value) goto_true Bad
 
         // number -> index; every name takes 32 bytes: Names + index * 32
@@ -939,154 +912,164 @@ public methode SelectDrive(_, base, temp, work, index, counter, value){
         $work <<: 5
         $pBase: Disk.Names
         $pBase +: $work
-        TargetPath: $base
+        mainPri64.targetPath: $base
         return
 
-    ->Bad
-        prepare $pBase@Text: "That is not one of the listed numbers.\n" call Basic.Print(solid base)
+    ->Bad->
+        prepare $pBase@Text: "That is not one of the listed numbers.\n" call Basic.Print(=)
 
         goto Ask↑
 
-    ->Quit
+    ->Quit->
         call Aborted(=)
 }
 
 // ConfirmWrite: "Write <image> on <drive> ... y/n". Anything except y/Y aborts.
-public methode ConfirmWrite(_, base, temp, work, counter){
-    prepare $pBase@Text: "\nWrite " call Basic.Print(solid base)
+public methode ConfirmWrite(_, base, temp, work, counter, item, admin){
+    prepare $pBase@Text: "\nWrite " call Basic.Print(=)
 
-    prepare $base: ImagePath call Basic.Print(solid base)
+    ->InfoPrint
+        $base: mainPri64.imagePath
+        prepare $base call Basic.Print(=)
 
-    prepare $pBase: " (" call Basic.Print(solid base)
+        prepare $pBase: " (" call Basic.Print(=)
 
-    prepare $base: ImageSize call Basic.PrintInt(solid base)
+        $base: mainPri64.imageSize
+        prepare $base call Basic.PrintInt(=)
 
-    prepare $pBase: " bytes) on " call Basic.Print(solid base)
+        prepare $pBase: " bytes) on " call Basic.Print(=)
 
-    prepare $base: TargetOpen call Basic.Print(solid base)
+        $base: mainPri64.targetOpen
+        prepare $base call Basic.Print(=)
 
-    prepare $pBase: " (" call Basic.Print(solid base)
+        prepare $pBase: " (" call Basic.Print(=)
 
-    $base: Disk.Sectors
-    $base /: 2048
-    prepare $base call Basic.PrintInt(solid base)
+        $base: Disk.diskPub64.sectors
+        $base /: 2048
+        prepare $base call Basic.PrintInt(=)
 
-    prepare $pBase: " MiB" call Basic.Print(solid base)
+        prepare $pBase: " MiB" call Basic.Print(=)
 
-    call Disk.Model(_, base, temp, work, counter)
+        call Disk.Model(=)
 
-    $pBase: Disk.Text
-    _: $pBase[0]
-    compare(_ = 0) goto_true NoModel
+        $pBase: Disk.Text
+        _: $pBase[0]
+        compare(_ = 0) goto_true NoModel
 
-    prepare $pBase: ", " call Basic.Print(solid base)
+        prepare $pBase: ", " call Basic.Print(=)
 
-    prepare $pBase: Disk.Text call Basic.Print(solid base)
+        prepare $pBase: Disk.Text call Basic.Print(=)
 
-    ->NoModel
-        prepare $pBase@Text: ")\n" call Basic.Print(solid base)
+    ->NoModel->
+        prepare $pBase@Text: ")\n" call Basic.Print(=)
 
-        prepare $pBase: "Everything on this drive will be erased. Continue? (y/n): " call Basic.Print(solid base)
+        prepare $pBase: "Everything on this drive will be erased. Continue? (y/n): " call Basic.Print(=)
 
-        call ReadAnswer(_, base, temp, work, counter)
+        call ReadAnswer(=)
 
         $work: $counter@Len
         compare($work = 0) goto_true No
 
-        _: $pBase@Answer[0]
+        _: $pBase[0]
         compare(_ = 121) goto_true Yes         // y
 
         compare(_ = 89) goto_true Yes          // Y
 
-    ->No
+    ->No->
         call Aborted(=)
 
-    ->Yes
+    ->Yes->
 }
 
 // Start: parses the command line, then lists the drives (--list), shows the help, or writes the image.
 // Without a target the user chooses the drive from a numbered list; with a target the drive or file is given directly.
 Start{
     Nl[0]: 10
-    call Args.Load(_, base, temp, work, index, counter, slot)
+    call Args.Load(=)
     goto_flag carry ArgsOk
 
-    prepare $pBase: "cannot read the command line"
+    prepare $pBase@Text: "cannot read the command line"
     call Die(=)
 
-    ->ArgsOk
+    ->ArgsOk->
         // parse the switches and the paths
         call ParseArgs(=)
 
         // --help: print the usage and end
-        $value: FHelp
-        compare($value = 0) goto_true NoHelp
+        compare (mainOpt.help) goto_flag not_carry NoHelp
 
         call Usage(=)
 
-        prepare $base@Code: 0 call Sys.Exit(solid base)
+        prepare $base@Code: 0 call Sys.Exit(=)
 
-    ->NoHelp
+    ->NoHelp->
         // --list: show the drives and end
-        $value: FList
-        compare($value = 0) goto_true NoList
+        compare (mainOpt.list) goto_flag not_carry NoList
 
-        Disk.ListAll: FAll
-        call Disk.List(_, base, temp, work, index, value, counter)
+        Disk.diskDk.listAll: false
+        compare (mainOpt.all) goto_flag not_carry ListNarrow
+        Disk.diskDk.listAll: true
+        ->ListNarrow->
+        call Disk.List(=)
 
-        prepare $base@Code: 0 call Sys.Exit(solid base)
+        prepare $base@Code: 0 call Sys.Exit(=)
 
-    ->NoList
+    ->NoList->
         // no image given: show the usage and the drive list, exit code 1
-        $value: ImagePath
+        $value: mainPri64.imagePath
         compare($value != 0) goto_true HaveImage
 
         call Usage(=)
 
-        Disk.ListAll: 0
-        call Disk.List(_, base, temp, work, index, value, counter)
+        Disk.diskDk.listAll: false
+        call Disk.List(=)
 
-        prepare $base@Code: 1 call Sys.Exit(solid base)
+        prepare $base@Code: 1 call Sys.Exit(=)
 
-    ->HaveImage
-        $value: TargetPath
+    ->HaveImage->
+        $value: mainPri64.targetPath
         compare($value != 0) goto_true HaveTarget
 
         // Without a target: list the drives, choose a number, confirm
-        call NeedRoot(_, base, temp, work, counter)
+        call NeedRoot(=)
 
         call OpenImage(=)
 
-        prepare $pBase@Text: "ibytWriter - image: " call Basic.Print(solid base)
+        prepare $pBase@Text: "ibytWriter - image: " call Basic.Print(=)
 
-        prepare $base: ImagePath call Basic.Print(solid base)
+        $base: mainPri64.imagePath
+        prepare $base call Basic.Print(=)
 
-        prepare $pBase: " (" call Basic.Print(solid base)
+        prepare $pBase: " (" call Basic.Print(=)
 
-        prepare $base: ImageSize call Basic.PrintInt(solid base)
+        $base: mainPri64.imageSize
+        prepare $base call Basic.PrintInt(=)
 
-        prepare $pBase: " bytes)\n\n" call Basic.Print(solid base)
+        prepare $pBase: " bytes)\n\n" call Basic.Print(=)
 
-        prepare $pBase: "USB drives:\n\n" call Basic.Print(solid base)
+        prepare $pBase: "USB drives:\n\n" call Basic.Print(=)
 
-        Disk.Numbered: 1
-        Disk.ListAll: FAll
-        call Disk.List(_, base, temp, work, index, value, counter)
+        Disk.diskDk.numbered: true
+        Disk.diskDk.listAll: false
+        compare (mainOpt.all) goto_flag not_carry ListNarrow2
+        Disk.diskDk.listAll: true
+        ->ListNarrow2->
+        call Disk.List(=)
         goto_flag carry Listed
 
-        prepare $pBase: "cannot read /sys/block"
+        prepare $pBase@Text: "cannot read /sys/block"
         call Die(=)
 
-    ->Listed
+    ->Listed->
         // no drive found: nothing to do
-        $value: Disk.ListCount
+        $value: Disk.diskPub64.listCount
         compare($value != 0) goto_true HaveDrives
 
-        prepare $pBase@Text: "\nNo USB drive found. Plug in the stick and start ibytWriter again.\n" call Basic.Print(solid base)
+        prepare $pBase@Text: "\nNo USB drive found. Plug in the stick and start ibytWriter again.\n" call Basic.Print(=)
 
-        prepare $base: 1 call Sys.Exit(solid base)
+        prepare $base: 1 call Sys.Exit(=)
 
-    ->HaveDrives
+    ->HaveDrives->
         // choose a drive, check it, confirm, clear the ends, write, verify
         call SelectDrive(=)
 
@@ -1096,23 +1079,24 @@ Start{
 
         call WipeEnds(=)
 
-        prepare $pBase@Text: "Writing ...\n" call Basic.Print(solid base)
+        prepare $pBase@Text: "Writing ...\n" call Basic.Print(=)
 
         call WriteImage(=)
 
         call VerifyImage(=)
 
-        prepare $pBase: "Done: " call Basic.Print(solid base)
+        prepare $pBase: "Done: " call Basic.Print(=)
 
-        prepare $base: Total call Basic.PrintInt(solid base)
+        $base: mainPri64.total
+        prepare $base call Basic.PrintInt(=)
 
-        prepare $pBase: " bytes written and verified.\n" call Basic.Print(solid base)
+        prepare $pBase: " bytes written and verified.\n" call Basic.Print(=)
 
-        prepare $pBase: "The stick is bootable now. Remove it safely, plug it into the PC and choose it in the boot menu.\n" call Basic.Print(solid base)
+        prepare $pBase: "The stick is bootable now. Remove it safely, plug it into the PC and choose it in the boot menu.\n" call Basic.Print(=)
 
         exit
 
-    ->HaveTarget
+    ->HaveTarget->
         // target given on the command line: the same steps, with the summary and the typed confirmation
         call OpenImage(=)
 
@@ -1122,16 +1106,17 @@ Start{
 
         call WipeEnds(=)
 
-        prepare $pBase@Text: "Writing ...\n" call Basic.Print(solid base)
+        prepare $pBase@Text: "Writing ...\n" call Basic.Print(=)
 
         call WriteImage(=)
 
         call VerifyImage(=)
 
-        prepare $pBase: "Done: " call Basic.Print(solid base)
+        prepare $pBase: "Done: " call Basic.Print(=)
 
-        prepare $base: Total call Basic.PrintInt(solid base)
+        $base: mainPri64.total
+        prepare $base call Basic.PrintInt(=)
 
-        prepare $pBase: " bytes written and verified.\n" call Basic.Print(solid base)
+        prepare $pBase: " bytes written and verified.\n" call Basic.Print(=)
 
 }
